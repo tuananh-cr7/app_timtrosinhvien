@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "956038957486",
+    "project_id": "app-timtrosinhvien",
+    "storage_bucket": "app-timtrosinhvien.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:956038957486:android:bfdb30b764cacf7285203f",
+        "android_client_info": {
+          "package_name": "com.example.app_timtrosinhvien"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "956038957486-hnmvsbsfcf9bqpb72u42h6pa226e2aag.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.app_timtrosinhvien",
+            "certificate_hash": "bbd7bd0dfa031bb14c076e4ece5e0dc012913ba8"
+          }
+        },
+        {
+          "client_id": "956038957486-on96sgr8cms19aq1uekt0el4mt2d547l.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD4z4YiwXZNAkcPosQ8OLrYw9o1nq2BDSs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "956038957486-on96sgr8cms19aq1uekt0el4mt2d547l.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

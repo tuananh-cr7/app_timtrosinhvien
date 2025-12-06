@@ -1,0 +1,75 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // USERS: users/{userId}
+    match /users/{userId} {
+      // Cho phép mọi người đọc hồ sơ cơ bản
+      allow read: if true;
+
+      // Chỉ chính chủ mới được tạo/cập nhật/xoá hồ sơ
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // ROOMS (TIN ĐĂNG PHÒNG TRỌ): rooms/{roomId}
+    match /rooms/{roomId} {
+      // Ai cũng đọc được tin phòng trọ
+      allow read: if true;
+
+      // Tạo mới: User đã đăng nhập có thể tạo room
+      allow create: if request.auth != null;
+      
+      // Cập nhật/Xóa: Chỉ ownerId (người đăng tin) mới được sửa/xóa
+      allow update, delete: if request.auth != null
+                           && resource.data.ownerId == request.auth.uid;
+    }
+
+    // FAVORITES: favorites/{favoriteId}
+    match /favorites/{favoriteId} {
+      // Đọc: User chỉ đọc được favorites của chính mình
+      allow read: if request.auth != null
+                  && request.auth.uid == resource.data.userId;
+      
+      // Tạo mới: User chỉ tạo favorite với userId của chính mình
+      allow create: if request.auth != null
+                    && request.auth.uid == request.resource.data.userId;
+      
+      // Cập nhật/Xóa: User chỉ sửa/xóa favorites của chính mình
+      allow update, delete: if request.auth != null
+                             && request.auth.uid == resource.data.userId;
+    }
+
+    // LỊCH SỬ XEM: viewHistory/{historyId}
+    match /viewHistory/{historyId} {
+      allow read: if request.auth != null
+                  && request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null
+                    && request.auth.uid == request.resource.data.userId;
+      allow update, delete: if request.auth != null
+                             && request.auth.uid == resource.data.userId;
+    }
+
+    // THÔNG BÁO: notifications/{notiId}
+    match /notifications/{notiId} {
+      allow read: if request.auth != null
+                  && request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null
+                    && request.auth.uid == request.resource.data.userId;
+      allow update, delete: if request.auth != null
+                             && request.auth.uid == resource.data.userId;
+    }
+
+    // CHAT / MESSAGES: conversations/{convId}/messages/{msgId}
+    match /conversations/{convId}/messages/{msgId} {
+      // participantIds là array chứa các uid trong cuộc hội thoại
+      allow read, write: if request.auth != null
+                         && request.resource.data.participantIds
+                              .hasAny([request.auth.uid]);
+    }
+
+    // Mặc định chặn các collection khác nếu chưa định nghĩa
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
