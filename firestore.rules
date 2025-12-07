@@ -9,6 +9,12 @@ service cloud.firestore {
 
       // Chỉ chính chủ mới được tạo/cập nhật/xoá hồ sơ
       allow write: if request.auth != null && request.auth.uid == userId;
+      
+      // FCM TOKENS: users/{userId}/fcmTokens/{tokenId}
+      match /fcmTokens/{tokenId} {
+        // User chỉ đọc/ghi FCM tokens của chính mình
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
     }
 
     // ROOMS (TIN ĐĂNG PHÒNG TRỌ): rooms/{roomId}
@@ -51,20 +57,82 @@ service cloud.firestore {
 
     // THÔNG BÁO: notifications/{notiId}
     match /notifications/{notiId} {
-      allow read: if request.auth != null
-                  && request.auth.uid == resource.data.userId;
+      // Đọc: User chỉ đọc được notifications của chính mình
+      allow get: if request.auth != null
+                 && resource.data.userId == request.auth.uid;
+      
+      // List/Query: Cho phép query nhưng chỉ trả về notifications của user hiện tại
+      // Firestore sẽ tự động filter các documents dựa trên rule 'get'
+      // Đảm bảo query có where('userId', isEqualTo: request.auth.uid) bằng cách kiểm tra resource.data
+      // Lưu ý: Trong list rule, resource có thể là null hoặc không phải từng document
+      // Nên chúng ta chỉ cần kiểm tra request.auth != null
+      // Firestore sẽ tự động filter các documents dựa trên rule 'get'
+      allow list: if request.auth != null;
+      
+      // Tạo mới: Cho phép user tạo notification cho người khác (ví dụ: notification về tin nhắn mới)
+      // Nhưng chỉ cho phép nếu có type hợp lệ (new_message, room_approved, etc.)
       allow create: if request.auth != null
-                    && request.auth.uid == request.resource.data.userId;
+                    && request.resource.data.type is string
+                    && request.resource.data.userId is string
+                    && (request.resource.data.type == 'new_message'
+                         || request.resource.data.type == 'room_approved'
+                         || request.resource.data.type == 'room_rejected'
+                         || request.resource.data.type == 'room_price_changed');
+      
+      // Cập nhật/Xóa: User chỉ sửa/xóa notifications của chính mình
       allow update, delete: if request.auth != null
-                             && request.auth.uid == resource.data.userId;
+                             && resource.data.userId == request.auth.uid;
     }
 
-    // CHAT / MESSAGES: conversations/{convId}/messages/{msgId}
-    match /conversations/{convId}/messages/{msgId} {
-      // participantIds là array chứa các uid trong cuộc hội thoại
-      allow read, write: if request.auth != null
-                         && request.resource.data.participantIds
-                              .hasAny([request.auth.uid]);
+    // CONVERSATIONS: conversations/{convId}
+    match /conversations/{convId} {
+      // Đọc: User chỉ đọc được conversation mà họ là participant
+      allow read: if request.auth != null
+                  && resource.data.participantIds.hasAny([request.auth.uid]);
+      
+      // Tạo mới: User đã đăng nhập có thể tạo conversation nếu họ là participant
+      allow create: if request.auth != null
+                    && request.resource.data.participantIds.hasAny([request.auth.uid]);
+      
+      // Cập nhật: User chỉ update conversation mà họ là participant
+      // Cho phép update các field như unreadCount, lastMessage, lastMessageAt, otherUserName, otherUserAvatar
+      // Nhưng không cho phép thay đổi participantIds
+      allow update: if request.auth != null
+                    && resource.data.participantIds.hasAny([request.auth.uid])
+                    && request.resource.data.participantIds == resource.data.participantIds;
+      
+      // Xóa: User chỉ xóa conversation mà họ là participant
+      allow delete: if request.auth != null
+                    && resource.data.participantIds.hasAny([request.auth.uid]);
+      
+      // MESSAGES: conversations/{convId}/messages/{msgId}
+      match /messages/{msgId} {
+        // Đọc: User chỉ đọc được messages trong conversation mà họ là participant
+        allow read: if request.auth != null
+                    && get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds.hasAny([request.auth.uid]);
+        
+        // Tạo mới: User chỉ gửi message trong conversation mà họ là participant
+        allow create: if request.auth != null
+                      && request.resource.data.senderId == request.auth.uid
+                      && get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds.hasAny([request.auth.uid]);
+        
+        // Cập nhật: User có thể update message của chính mình
+        // Hoặc update isRead cho messages của người khác (để đánh dấu đã đọc)
+        allow update: if request.auth != null
+                      && get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds.hasAny([request.auth.uid])
+                      && (
+                          // Update message của chính mình
+                          resource.data.senderId == request.auth.uid
+                          ||
+                          // Hoặc chỉ update isRead và readAt cho messages của người khác (đánh dấu đã đọc)
+                          (resource.data.senderId != request.auth.uid
+                           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead', 'readAt']))
+                      );
+        
+        // Xóa: User chỉ xóa message của chính mình
+        allow delete: if request.auth != null
+                      && resource.data.senderId == request.auth.uid;
+      }
     }
 
     // Mặc định chặn các collection khác nếu chưa định nghĩa

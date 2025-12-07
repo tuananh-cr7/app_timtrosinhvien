@@ -53,24 +53,46 @@ class NotificationsRepository {
   }) {
     final user = _auth.currentUser;
     if (user == null) {
+      print('⚠️ NotificationsRepository: User is null');
       return Stream.value([]);
     }
 
-    Query query = _firestore
-        .collection(_collectionName)
-        .where('userId', isEqualTo: user.uid);
+    print('🔍 NotificationsRepository: Querying notifications for userId: ${user.uid}');
 
-    if (unreadOnly) {
-      query = query.where('isRead', isEqualTo: false);
+    try {
+      Query query = _firestore
+          .collection(_collectionName)
+          .where('userId', isEqualTo: user.uid);
+
+      if (unreadOnly) {
+        query = query.where('isRead', isEqualTo: false);
+      }
+
+      query = query.orderBy('createdAt', descending: true);
+
+      return query.snapshots().map((snapshot) {
+        print('📬 NotificationsRepository: Received ${snapshot.docs.length} notifications');
+        final notifications = snapshot.docs
+            .map((doc) {
+              try {
+                return AppNotification.fromFirestore(doc);
+              } catch (e) {
+                print('❌ Error parsing notification ${doc.id}: $e');
+                return null;
+              }
+            })
+            .whereType<AppNotification>()
+            .toList();
+        return notifications;
+      }).handleError((error) {
+        print('❌ NotificationsRepository Stream Error: $error');
+        // Return empty list on error instead of crashing
+        return <AppNotification>[];
+      });
+    } catch (e) {
+      print('❌ NotificationsRepository: Error creating stream: $e');
+      return Stream.value(<AppNotification>[]);
     }
-
-    query = query.orderBy('createdAt', descending: true);
-
-    return query.snapshots().map((snapshot) {
-      return snapshot.docs
-          .map((doc) => AppNotification.fromFirestore(doc))
-          .toList();
-    });
   }
 
   /// Đếm số thông báo chưa đọc.
@@ -100,10 +122,12 @@ class NotificationsRepository {
       return Stream.value(0);
     }
 
+    // Thêm orderBy để tránh lỗi permission khi Firestore tự động thêm orderBy('__name__')
     return _firestore
         .collection(_collectionName)
         .where('userId', isEqualTo: user.uid)
         .where('isRead', isEqualTo: false)
+        .orderBy('createdAt', descending: true)
         .snapshots()
         .map((snapshot) => snapshot.docs.length);
   }

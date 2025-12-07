@@ -68,6 +68,7 @@ class Message {
     this.isRead = false,
     this.readAt,
     this.attachments,
+    this.status = MessageStatus.sent,
   });
 
   final String id;
@@ -79,23 +80,85 @@ class Message {
   final bool isRead;
   final DateTime? readAt;
   final List<String>? attachments; // URLs của ảnh/file
+  final MessageStatus status; // Trạng thái: sending, sent, delivered, read
 
   /// Tạo từ Firestore document.
   factory Message.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+    
+    // Parse createdAt từ Timestamp
+    DateTime createdAt;
+    if (data['createdAt'] != null) {
+      if (data['createdAt'] is Timestamp) {
+        createdAt = (data['createdAt'] as Timestamp).toDate();
+      } else if (data['createdAt'] is DateTime) {
+        createdAt = data['createdAt'] as DateTime;
+      } else {
+        // Fallback nếu không parse được
+        createdAt = DateTime.now();
+        print('⚠️ Message ${doc.id} có createdAt không hợp lệ: ${data['createdAt']}');
+      }
+    } else {
+      // Nếu không có createdAt, dùng thời gian hiện tại
+      createdAt = DateTime.now();
+      print('⚠️ Message ${doc.id} không có createdAt');
+    }
+    
     return Message(
       id: doc.id,
       conversationId: data['conversationId'] ?? '',
       senderId: data['senderId'] ?? '',
       content: data['content'] ?? '',
       type: MessageType.fromString(data['type'] ?? 'text'),
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      createdAt: createdAt,
       isRead: data['isRead'] ?? false,
       readAt: (data['readAt'] as Timestamp?)?.toDate(),
       attachments: data['attachments'] != null
           ? List<String>.from(data['attachments'])
           : null,
+      status: MessageStatus.fromString(data['status'] ?? 'sent'),
     );
+  }
+}
+
+/// Trạng thái tin nhắn.
+enum MessageStatus {
+  sending, // Đang gửi
+  sent, // Đã gửi
+  delivered, // Đã gửi đến
+  read, // Đã đọc
+  failed; // Gửi thất bại
+
+  static MessageStatus fromString(String value) {
+    switch (value) {
+      case 'sending':
+        return MessageStatus.sending;
+      case 'sent':
+        return MessageStatus.sent;
+      case 'delivered':
+        return MessageStatus.delivered;
+      case 'read':
+        return MessageStatus.read;
+      case 'failed':
+        return MessageStatus.failed;
+      default:
+        return MessageStatus.sent;
+    }
+  }
+
+  String get value {
+    switch (this) {
+      case MessageStatus.sending:
+        return 'sending';
+      case MessageStatus.sent:
+        return 'sent';
+      case MessageStatus.delivered:
+        return 'delivered';
+      case MessageStatus.read:
+        return 'read';
+      case MessageStatus.failed:
+        return 'failed';
+    }
   }
 }
 

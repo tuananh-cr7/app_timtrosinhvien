@@ -6,6 +6,9 @@ import '../models/notification.dart';
 import '../../home/room_detail_screen.dart';
 import '../../home/data/repositories/rooms_repository.dart';
 import '../../home/models/room.dart';
+import '../../chat/screens/conversation_detail_screen.dart';
+import '../../chat/data/repositories/conversations_repository.dart';
+import '../../chat/models/conversation.dart';
 import '../../../core/models/api_result.dart';
 import '../../../core/widgets/loading_error_widget.dart';
 
@@ -20,6 +23,7 @@ class NotificationsScreen extends StatefulWidget {
 class _NotificationsScreenState extends State<NotificationsScreen> {
   final _notificationsRepository = NotificationsRepository();
   final _roomsRepository = RoomsRepository();
+  final _conversationsRepository = ConversationsRepository();
   final _auth = FirebaseAuth.instance;
 
   @override
@@ -37,6 +41,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         ),
       );
     }
+
+    // Debug: In UID ra console
+    print('🔍 DEBUG: User UID hiện tại: ${user.uid}');
 
     return Scaffold(
       appBar: AppBar(
@@ -154,6 +161,14 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       body: StreamBuilder<List<AppNotification>>(
         stream: _notificationsRepository.getNotificationsStream(),
         builder: (context, snapshot) {
+          // Debug log
+          if (snapshot.hasError) {
+            print('❌ NotificationsScreen Stream Error: ${snapshot.error}');
+            if (snapshot.stackTrace != null) {
+              print('❌ Error details: ${snapshot.stackTrace}');
+            }
+          }
+
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
@@ -165,7 +180,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 children: [
                   const Icon(Icons.error_outline, size: 48, color: Colors.red),
                   const SizedBox(height: 16),
-                  Text('Lỗi: ${snapshot.error}'),
+                  Text(
+                    'Lỗi: ${snapshot.error}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  if (snapshot.error.toString().contains('index'))
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                      child: Text(
+                        'Cần tạo Firestore index. Xem console log để biết link tạo index.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 11, color: Colors.orange.shade700),
+                      ),
+                    ),
                   const SizedBox(height: 16),
                   ElevatedButton(
                     onPressed: () => setState(() {}),
@@ -177,6 +206,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           }
 
           final notifications = snapshot.data ?? [];
+          print('📱 NotificationsScreen: Displaying ${notifications.length} notifications');
 
           if (notifications.isEmpty) {
             return Center(
@@ -193,6 +223,46 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     'Chưa có thông báo nào',
                     style: theme.textTheme.titleMedium?.copyWith(
                       color: Colors.grey.shade600,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  // Debug info
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 32),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          '🔍 Debug Info',
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue.shade900,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'User ID: ${user.uid}',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: Colors.blue.shade800,
+                            fontFamily: 'monospace',
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Tạo notification trong Firestore với userId = User ID ở trên',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: Colors.blue.shade700,
+                            fontSize: 11,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -254,11 +324,80 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         }
         break;
       case NotificationType.newMessage:
-        // TODO: Navigate đến chat detail
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Tính năng chat đang phát triển')),
-          );
+        // Navigate đến ConversationDetailScreen
+        if (notification.data != null) {
+          final conversationId = notification.data!['conversationId'] as String?;
+          final senderId = notification.data!['senderId'] as String?;
+          final senderName = notification.data!['senderName'] as String?;
+          final roomId = notification.data!['roomId'] as String?;
+          final roomTitle = notification.data!['roomTitle'] as String?;
+
+          if (conversationId != null) {
+            // Lấy thông tin conversation
+            final result = await _conversationsRepository.getConversationById(conversationId);
+            
+            if (result is ApiSuccess<Conversation?>) {
+              final conversation = result.data;
+              if (conversation != null && mounted) {
+                // Conversation đã được enrich với otherUserId và otherUserName đúng
+                // Đảm bảo otherUserId không null và không trùng với currentUserId
+                final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+                final finalOtherUserId = conversation.otherUserId;
+                
+                if (finalOtherUserId == null || finalOtherUserId.isEmpty) {
+                  print('❌ Conversation không có otherUserId hợp lệ');
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Không thể mở cuộc trò chuyện')),
+                  );
+                  return;
+                }
+                
+                if (finalOtherUserId == currentUserId) {
+                  print('❌ otherUserId trùng với currentUserId: $finalOtherUserId');
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Lỗi: Không thể xác định người đối thoại')),
+                  );
+                  return;
+                }
+                
+                print('✅ Mở chat với:');
+                print('  - conversationId: $conversationId');
+                print('  - otherUserId: $finalOtherUserId');
+                print('  - otherUserName: ${conversation.otherUserName}');
+                print('  - otherUserAvatar: ${conversation.otherUserAvatar}');
+                print('  - currentUserId: $currentUserId');
+                
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ConversationDetailScreen(
+                      conversationId: conversationId,
+                      otherUserId: finalOtherUserId,
+                      otherUserName: conversation.otherUserName ?? 'Người dùng',
+                      otherUserAvatar: conversation.otherUserAvatar,
+                      roomId: conversation.roomId ?? roomId,
+                      roomTitle: conversation.roomTitle ?? roomTitle,
+                    ),
+                  ),
+                );
+              } else if (mounted) {
+                // Nếu không lấy được conversation, không mở (vì không có otherUserId đúng)
+                print('❌ Không lấy được conversation với ID: $conversationId');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Không thể mở cuộc trò chuyện')),
+                );
+              }
+            } else if (mounted) {
+              // Nếu không lấy được conversation, không mở (vì không có otherUserId đúng)
+              print('❌ Lỗi lấy conversation: ${(result as ApiError).message}');
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Không thể mở cuộc trò chuyện')),
+              );
+            }
+          } else if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Không tìm thấy thông tin cuộc trò chuyện')),
+            );
+          }
         }
         break;
       default:
@@ -397,21 +536,31 @@ class _NotificationCard extends StatelessWidget {
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        Text(
-                          _formatTime(notification.createdAt),
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: Colors.grey.shade600,
+                        Flexible(
+                          child: Text(
+                            _formatTime(notification.createdAt),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: Colors.grey.shade600,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        const Spacer(),
+                        const SizedBox(width: 8),
                         if (onMarkRead != null)
-                          TextButton(
-                            onPressed: onMarkRead,
-                            style: TextButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(horizontal: 8),
-                              minimumSize: const Size(0, 32),
+                          Flexible(
+                            child: TextButton(
+                              onPressed: onMarkRead,
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                                minimumSize: const Size(0, 32),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: const Text(
+                                'Đánh dấu đã đọc',
+                                style: TextStyle(fontSize: 12),
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                            child: const Text('Đánh dấu đã đọc'),
                           ),
                         IconButton(
                           icon: const Icon(Icons.delete_outline, size: 20),
@@ -419,6 +568,7 @@ class _NotificationCard extends StatelessWidget {
                           tooltip: 'Xóa',
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(),
+                          visualDensity: VisualDensity.compact,
                         ),
                       ],
                     ),

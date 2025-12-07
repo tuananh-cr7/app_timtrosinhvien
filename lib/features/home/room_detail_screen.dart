@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import 'models/room.dart';
 import 'favorites_manager.dart';
@@ -9,6 +10,9 @@ import 'data/repositories/favorites_repository.dart';
 import '../../core/models/api_result.dart';
 import '../map/widgets/map_preview_widget.dart';
 import '../map/screens/room_location_screen.dart';
+import '../chat/screens/conversation_detail_screen.dart';
+import '../chat/data/repositories/conversations_repository.dart';
+import '../chat/models/conversation.dart';
 
 class RoomDetailScreen extends StatefulWidget {
   const RoomDetailScreen({super.key, required this.room});
@@ -535,7 +539,10 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
               _ActionTile(
                 icon: Icons.chat_bubble_outline,
                 label: 'Chat với chủ trọ',
-                onTap: () => Navigator.of(context).pop(),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _openChat();
+                },
               ),
               const SizedBox(height: 8),
             ],
@@ -646,6 +653,93 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
           SnackBar(
             content: Text('Lỗi: $e'),
             duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Mở chat với chủ trọ
+  Future<void> _openChat() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Vui lòng đăng nhập để chat'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Không cho chat với chính mình
+    if (user.uid == widget.room.ownerId) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Bạn không thể chat với chính mình'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      final ownerId = widget.room.ownerId;
+      if (ownerId == null || ownerId.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Không tìm thấy thông tin chủ trọ'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        return;
+      }
+
+      final repository = ConversationsRepository();
+      
+      // Tạo hoặc lấy conversation
+      final result = await repository.createOrGetConversation(
+        otherUserId: ownerId,
+        roomId: widget.room.id,
+        roomTitle: widget.room.title,
+        roomThumbnail: widget.room.thumbnailUrl,
+      );
+
+      if (result is ApiSuccess<Conversation> && mounted) {
+        final conversation = result.data;
+        final finalOwnerId = conversation.otherUserId ?? ownerId;
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ConversationDetailScreen(
+              conversationId: conversation.id,
+              otherUserId: finalOwnerId,
+              otherUserName: conversation.otherUserName ?? widget.room.ownerName ?? 'Chủ trọ',
+              otherUserAvatar: conversation.otherUserAvatar,
+              roomId: conversation.roomId ?? widget.room.id,
+              roomTitle: conversation.roomTitle ?? widget.room.title,
+            ),
+          ),
+        );
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lỗi: ${(result as ApiError).message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lỗi mở chat: $e'),
+            backgroundColor: Colors.red,
           ),
         );
       }

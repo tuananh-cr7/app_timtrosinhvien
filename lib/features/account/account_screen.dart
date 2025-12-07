@@ -10,6 +10,8 @@ import '../auth/services/auth_service.dart';
 import '../auth/screens/login_screen.dart';
 import '../home/data/import_to_firestore.dart';
 import '../post/screens/posted_rooms_management_screen.dart';
+import '../chat/screens/conversations_list_screen.dart';
+import '../auth/data/repositories/users_repository.dart';
 import '../../core/models/api_result.dart';
 import '../../core/widgets/loading_error_widget.dart';
 
@@ -22,12 +24,55 @@ class AccountScreen extends StatefulWidget {
 
 class _AccountScreenState extends State<AccountScreen> {
   final _authService = AuthService();
+  final _usersRepository = UsersRepository();
   bool _isLoggingOut = false;
+  Map<String, dynamic>? _userData;
+  bool _isLoadingUserData = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+  }
+
+  Future<void> _loadUserData() async {
+    if (!mounted) return;
+    setState(() => _isLoadingUserData = true);
+    try {
+      // Reload Firebase Auth user để lấy displayName mới nhất
+      final user = _authService.currentUser;
+      if (user != null) {
+        await user.reload();
+      }
+      
+      // Load từ Firestore
+      final result = await _usersRepository.getCurrentUser();
+      if (result is ApiSuccess<Map<String, dynamic>?>) {
+        if (mounted) {
+          setState(() {
+            _userData = result.data;
+          });
+        }
+      }
+    } catch (e) {
+      print('⚠️ Lỗi tải dữ liệu user: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingUserData = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final user = _authService.currentUser;
+    
+    // Ưu tiên dùng tên từ Firestore, fallback về Firebase Auth
+    final displayName = _userData?['displayName'] ?? 
+                        _userData?['name'] ?? 
+                        user?.displayName ?? 
+                        'Người dùng';
 
     return Scaffold(
       appBar: AppBar(
@@ -53,8 +98,8 @@ class _AccountScreenState extends State<AccountScreen> {
                         : null,
                     child: user?.photoURL == null
                         ? Text(
-                            (user?.displayName?.isNotEmpty == true
-                                    ? user!.displayName![0]
+                            (displayName.isNotEmpty
+                                    ? displayName[0]
                                     : user?.email?.isNotEmpty == true
                                         ? user!.email![0]
                                         : 'U')
@@ -72,7 +117,7 @@ class _AccountScreenState extends State<AccountScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          user?.displayName ?? 'Người dùng',
+                          displayName,
                           style: theme.textTheme.titleMedium
                               ?.copyWith(fontWeight: FontWeight.w700),
                         ),
@@ -87,12 +132,16 @@ class _AccountScreenState extends State<AccountScreen> {
                   ),
                   IconButton(
                     icon: Icon(Icons.edit, color: theme.colorScheme.primary),
-                    onPressed: () {
-                      Navigator.of(context).push(
+                    onPressed: () async {
+                      final result = await Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (_) => const EditProfileScreen(),
                         ),
                       );
+                      // Refresh dữ liệu nếu cập nhật thành công
+                      if (result == true) {
+                        _loadUserData();
+                      }
                     },
                   ),
                 ],
@@ -109,12 +158,16 @@ class _AccountScreenState extends State<AccountScreen> {
                 _MenuTile(
                   icon: Icons.person_outline,
                   label: 'Chỉnh sửa hồ sơ',
-                  onTap: () {
-                    Navigator.of(context).push(
+                  onTap: () async {
+                    final result = await Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const EditProfileScreen(),
                       ),
                     );
+                    // Refresh dữ liệu nếu cập nhật thành công
+                    if (result == true) {
+                      _loadUserData();
+                    }
                   },
                 ),
                 const Divider(height: 1),
@@ -149,6 +202,18 @@ class _AccountScreenState extends State<AccountScreen> {
                     Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const ViewHistoryScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const Divider(height: 1),
+                _MenuTile(
+                  icon: Icons.chat_bubble_outline,
+                  label: 'Tin nhắn',
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const ConversationsListScreen(),
                       ),
                     );
                   },
@@ -373,60 +438,313 @@ class _MenuTile extends StatelessWidget {
   }
 }
 
-class EditProfileScreen extends StatelessWidget {
+class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
+
+  @override
+  State<EditProfileScreen> createState() => _EditProfileScreenState();
+}
+
+class _EditProfileScreenState extends State<EditProfileScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _usersRepository = UsersRepository();
+  bool _isLoading = false;
+  bool _isLoadingData = true;
+  String? _selectedCity;
+  String? _selectedDistrict;
+
+  // Danh sách thành phố và quận/huyện
+  final List<String> _cities = [
+    'Hà Nội',
+    'TP.HCM',
+    'Đà Nẵng',
+    'Hải Phòng',
+    'Cần Thơ',
+    'An Giang',
+    'Bà Rịa - Vũng Tàu',
+    'Bắc Giang',
+    'Bắc Kạn',
+    'Bạc Liêu',
+    'Bắc Ninh',
+    'Bến Tre',
+    'Bình Định',
+    'Bình Dương',
+    'Bình Phước',
+    'Bình Thuận',
+    'Cà Mau',
+    'Cao Bằng',
+    'Đắk Lắk',
+    'Đắk Nông',
+    'Điện Biên',
+    'Đồng Nai',
+    'Đồng Tháp',
+    'Gia Lai',
+    'Hà Giang',
+    'Hà Nam',
+    'Hà Tĩnh',
+    'Hải Dương',
+    'Hậu Giang',
+    'Hòa Bình',
+    'Hưng Yên',
+    'Khánh Hòa',
+    'Kiên Giang',
+    'Kon Tum',
+    'Lai Châu',
+    'Lâm Đồng',
+    'Lạng Sơn',
+    'Lào Cai',
+    'Long An',
+    'Nam Định',
+    'Nghệ An',
+    'Ninh Bình',
+    'Ninh Thuận',
+    'Phú Thọ',
+    'Phú Yên',
+    'Quảng Bình',
+    'Quảng Nam',
+    'Quảng Ngãi',
+    'Quảng Ninh',
+    'Quảng Trị',
+    'Sóc Trăng',
+    'Sơn La',
+    'Tây Ninh',
+    'Thái Bình',
+    'Thái Nguyên',
+    'Thanh Hóa',
+    'Thừa Thiên Huế',
+    'Tiền Giang',
+    'Trà Vinh',
+    'Tuyên Quang',
+    'Vĩnh Long',
+    'Vĩnh Phúc',
+    'Yên Bái',
+  ];
+
+  final Map<String, List<String>> _districts = {
+    'Hà Nội': ['Ba Đình', 'Hoàn Kiếm', 'Tây Hồ', 'Long Biên', 'Cầu Giấy', 'Đống Đa', 'Hai Bà Trưng', 'Hoàng Mai', 'Thanh Xuân', 'Sóc Sơn', 'Đông Anh', 'Gia Lâm', 'Nam Từ Liêm', 'Bắc Từ Liêm', 'Mê Linh', 'Hà Đông', 'Sơn Tây', 'Ba Vì', 'Phúc Thọ', 'Đan Phượng', 'Hoài Đức', 'Quốc Oai', 'Thạch Thất', 'Chương Mỹ', 'Thanh Oai', 'Thường Tín', 'Phú Xuyên', 'Ứng Hòa', 'Mỹ Đức'],
+    'TP.HCM': ['Quận 1', 'Quận 2', 'Quận 3', 'Quận 4', 'Quận 5', 'Quận 6', 'Quận 7', 'Quận 8', 'Quận 9', 'Quận 10', 'Quận 11', 'Quận 12', 'Bình Thạnh', 'Tân Bình', 'Tân Phú', 'Phú Nhuận', 'Gò Vấp', 'Bình Tân', 'Hóc Môn', 'Củ Chi', 'Nhà Bè', 'Cần Giờ'],
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _phoneController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadUserData() async {
+    setState(() => _isLoadingData = true);
+    
+    try {
+      final result = await _usersRepository.getCurrentUser();
+      if (result is ApiSuccess<Map<String, dynamic>?>) {
+        final userData = result.data;
+        if (userData != null) {
+          setState(() {
+            _nameController.text = userData['displayName'] ?? userData['name'] ?? '';
+            _phoneController.text = userData['phone'] ?? '';
+            _selectedCity = userData['city'];
+            _selectedDistrict = userData['district'];
+          });
+        }
+      }
+    } catch (e) {
+      print('⚠️ Lỗi tải dữ liệu user: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingData = false);
+      }
+    }
+  }
+
+  Future<void> _handleSave() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final updateData = <String, dynamic>{
+        'displayName': _nameController.text.trim(),
+        'name': _nameController.text.trim(), // Để tương thích
+        if (_phoneController.text.trim().isNotEmpty)
+          'phone': _phoneController.text.trim(),
+        if (_selectedCity != null) 'city': _selectedCity,
+        if (_selectedDistrict != null) 'district': _selectedDistrict,
+      };
+
+      final result = await _usersRepository.updateUser(updateData);
+      
+      if (!mounted) return;
+
+      if (result is ApiSuccess) {
+        // Cập nhật Firebase Auth displayName để đồng bộ
+        try {
+          final user = FirebaseAuth.instance.currentUser;
+          if (user != null && _nameController.text.trim().isNotEmpty) {
+            await user.updateDisplayName(_nameController.text.trim());
+            await user.reload();
+          }
+        } catch (e) {
+          print('⚠️ Lỗi cập nhật Firebase Auth displayName: $e');
+        }
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cập nhật hồ sơ thành công!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.of(context).pop(true); // Trả về true để refresh
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lỗi: ${(result as ApiError).message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Lỗi: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    if (_isLoadingData) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Chỉnh sửa hồ sơ'),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Chỉnh sửa hồ sơ'),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(
-              decoration: const InputDecoration(
-                labelText: 'Họ tên',
+      body: Form(
+        key: _formKey,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Họ tên',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Vui lòng nhập họ tên';
+                  }
+                  return null;
+                },
               ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              decoration: const InputDecoration(
-                labelText: 'Số điện thoại',
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _phoneController,
+                decoration: const InputDecoration(
+                  labelText: 'Số điện thoại',
+                  prefixIcon: Icon(Icons.phone_outlined),
+                ),
+                keyboardType: TextInputType.phone,
+                validator: (value) {
+                  if (value != null && value.trim().isNotEmpty) {
+                    // Kiểm tra định dạng số điện thoại Việt Nam
+                    final phoneRegex = RegExp(r'^(0|\+84)[0-9]{9,10}$');
+                    if (!phoneRegex.hasMatch(value.trim().replaceAll(' ', ''))) {
+                      return 'Số điện thoại không hợp lệ';
+                    }
+                  }
+                  return null;
+                },
               ),
-              keyboardType: TextInputType.phone,
-            ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              decoration: const InputDecoration(labelText: 'Thành phố'),
-              items: const [
-                DropdownMenuItem(value: 'Hà Nội', child: Text('Hà Nội')),
-                DropdownMenuItem(value: 'TP.HCM', child: Text('TP.HCM')),
-              ],
-              onChanged: (_) {},
-            ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              decoration: const InputDecoration(labelText: 'Quận/Huyện'),
-              items: const [
-                DropdownMenuItem(value: 'Thanh Xuân', child: Text('Thanh Xuân')),
-                DropdownMenuItem(value: 'Cầu Giấy', child: Text('Cầu Giấy')),
-              ],
-              onChanged: (_) {},
-            ),
-            const Spacer(),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Lưu thay đổi'),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Thành phố',
+                  prefixIcon: Icon(Icons.location_city_outlined),
+                ),
+                value: _selectedCity,
+                items: _cities.map((city) {
+                  return DropdownMenuItem(
+                    value: city,
+                    child: Text(city),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _selectedCity = value;
+                    _selectedDistrict = null; // Reset district khi đổi city
+                  });
+                },
               ),
-            ),
-          ],
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Quận/Huyện',
+                  prefixIcon: Icon(Icons.location_on_outlined),
+                ),
+                value: _selectedDistrict,
+                items: _selectedCity != null && _districts.containsKey(_selectedCity)
+                    ? _districts[_selectedCity]!.map((district) {
+                        return DropdownMenuItem(
+                          value: district,
+                          child: Text(district),
+                        );
+                      }).toList()
+                    : null,
+                onChanged: _selectedCity != null && _districts.containsKey(_selectedCity)
+                    ? (value) {
+                        setState(() {
+                          _selectedDistrict = value;
+                        });
+                      }
+                    : null,
+              ),
+              const Spacer(),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _isLoading ? null : _handleSave,
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Lưu thay đổi'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

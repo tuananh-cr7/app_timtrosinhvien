@@ -1,5 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:google_sign_in/google_sign_in.dart';
+import '../../../core/services/fcm_service.dart';
+import '../../../core/services/presence_service.dart';
 
 /// Service quản lý xác thực Firebase Auth.
 class AuthService {
@@ -125,6 +127,19 @@ class AuthService {
 
   /// Đăng xuất.
   Future<void> signOut() async {
+    // Xóa FCM token trước khi đăng xuất
+    try {
+      await FCMService().deleteToken();
+    } catch (e) {
+      print('⚠️ AuthService: Error deleting FCM token: $e');
+    }
+    
+    // Set offline status
+    try {
+      await PresenceService().cleanup();
+    } catch (e) {
+      print('⚠️ AuthService: Error cleaning up presence: $e');
+    }
     // Đăng xuất Firebase Auth (quan trọng nhất)
     await _auth.signOut();
     
