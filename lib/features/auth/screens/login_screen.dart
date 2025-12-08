@@ -6,6 +6,7 @@ import 'register_screen.dart';
 import 'forgot_password_screen.dart';
 import 'email_verification_screen.dart';
 import '../../home/home_shell.dart';
+import '../../../core/services/service_locator.dart';
 
 /// Màn hình đăng nhập.
 class LoginScreen extends StatefulWidget {
@@ -54,10 +55,26 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       // Đăng nhập thành công → vào app
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomeShell()),
-        (route) => false,
-      );
+      // Lấy services từ ServiceLocator
+      final connectivityService = ServiceLocator.connectivityService;
+      final offlineQueueService = ServiceLocator.offlineQueueService;
+      if (connectivityService != null && offlineQueueService != null) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => HomeShell(
+              connectivityService: connectivityService,
+              offlineQueueService: offlineQueueService,
+            ),
+          ),
+          (route) => false,
+        );
+      } else {
+        // Fallback nếu services chưa được init (không nên xảy ra)
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const Scaffold(body: Center(child: Text('Đang khởi tạo...')))),
+          (route) => false,
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -82,10 +99,26 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
 
       // Google Sign-In tự động verify email → vào app luôn
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomeShell()),
-        (route) => false,
-      );
+      // Lấy services từ ServiceLocator
+      final connectivityService = ServiceLocator.connectivityService;
+      final offlineQueueService = ServiceLocator.offlineQueueService;
+      if (connectivityService != null && offlineQueueService != null) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => HomeShell(
+              connectivityService: connectivityService,
+              offlineQueueService: offlineQueueService,
+            ),
+          ),
+          (route) => false,
+        );
+      } else {
+        // Fallback nếu services chưa được init (không nên xảy ra)
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const Scaffold(body: Center(child: Text('Đang khởi tạo...')))),
+          (route) => false,
+        );
+      }
     } catch (e) {
       if (!mounted) return;
 

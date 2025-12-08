@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../../core/models/api_result.dart';
+import '../../../../core/services/service_locator.dart';
+import '../../../../core/services/offline_queue_service.dart';
 import '../../models/room.dart';
 import 'rooms_repository.dart';
 
@@ -58,6 +60,23 @@ class FavoritesRepository {
         return ApiError('Chưa đăng nhập');
       }
 
+      // Kiểm tra connectivity
+      final connectivityService = ServiceLocator.connectivityService;
+      final offlineQueueService = ServiceLocator.offlineQueueService;
+      
+      if (connectivityService != null && !connectivityService.isOnline) {
+        // Offline: queue operation
+        if (offlineQueueService != null) {
+          await offlineQueueService.queueOperation(QueuedOperation(
+            type: QueuedOperationType.addFavorite,
+            data: {'roomId': roomId},
+          ));
+          print('📝 Đã queue addFavorite (offline): roomId=$roomId');
+          return ApiSuccess(null);
+        }
+      }
+
+      // Online: thực hiện ngay
       // Kiểm tra đã có chưa
       final existing = await _firestore
           .collection(_collectionName)
@@ -80,6 +99,16 @@ class FavoritesRepository {
 
       return ApiSuccess(null);
     } catch (e) {
+      // Nếu lỗi network, thử queue
+      final offlineQueueService = ServiceLocator.offlineQueueService;
+      if (offlineQueueService != null && e.toString().contains('network')) {
+        await offlineQueueService.queueOperation(QueuedOperation(
+          type: QueuedOperationType.addFavorite,
+          data: {'roomId': roomId},
+        ));
+        print('📝 Đã queue addFavorite (network error): roomId=$roomId');
+        return ApiSuccess(null);
+      }
       return ApiError('Không thể thêm vào yêu thích: ${e.toString()}', e);
     }
   }
@@ -92,6 +121,23 @@ class FavoritesRepository {
         return ApiError('Chưa đăng nhập');
       }
 
+      // Kiểm tra connectivity
+      final connectivityService = ServiceLocator.connectivityService;
+      final offlineQueueService = ServiceLocator.offlineQueueService;
+      
+      if (connectivityService != null && !connectivityService.isOnline) {
+        // Offline: queue operation
+        if (offlineQueueService != null) {
+          await offlineQueueService.queueOperation(QueuedOperation(
+            type: QueuedOperationType.removeFavorite,
+            data: {'roomId': roomId},
+          ));
+          print('📝 Đã queue removeFavorite (offline): roomId=$roomId');
+          return ApiSuccess(null);
+        }
+      }
+
+      // Online: thực hiện ngay
       final snapshot = await _firestore
           .collection(_collectionName)
           .where('userId', isEqualTo: user.uid)
@@ -111,6 +157,16 @@ class FavoritesRepository {
 
       return ApiSuccess(null);
     } catch (e) {
+      // Nếu lỗi network, thử queue
+      final offlineQueueService = ServiceLocator.offlineQueueService;
+      if (offlineQueueService != null && e.toString().contains('network')) {
+        await offlineQueueService.queueOperation(QueuedOperation(
+          type: QueuedOperationType.removeFavorite,
+          data: {'roomId': roomId},
+        ));
+        print('📝 Đã queue removeFavorite (network error): roomId=$roomId');
+        return ApiSuccess(null);
+      }
       return ApiError('Không thể xóa khỏi yêu thích: ${e.toString()}', e);
     }
   }

@@ -17,15 +17,13 @@ class PriceFilterSheet extends StatefulWidget {
 
 class _PriceFilterSheetState extends State<PriceFilterSheet> {
   late double _minPrice;
-  late double _maxPrice;
   final double _minRange = 0;
-  final double _maxRange = 20; // 20 triệu VND
+  final double _maxRange = 50; // 50 triệu VND, để không cắt mất phòng giá cao
 
   @override
   void initState() {
     super.initState();
     _minPrice = widget.initialMinPrice ?? 0;
-    _maxPrice = widget.initialMaxPrice ?? 20;
   }
 
   String _formatPrice(double price) {
@@ -60,31 +58,27 @@ class _PriceFilterSheetState extends State<PriceFilterSheet> {
           ),
           // Title
           Text(
-            'Khoảng giá (VND)',
+            'Giá tối thiểu (VND)',
             style: theme.textTheme.titleLarge?.copyWith(
               fontWeight: FontWeight.bold,
             ),
           ),
           const SizedBox(height: 24),
-          // Range slider
-          RangeSlider(
-            values: RangeValues(_minPrice, _maxPrice),
+          // Single slider for minimum price
+          Slider(
+            value: _minPrice,
             min: _minRange,
             max: _maxRange,
-            divisions: 200, // 0.1 triệu mỗi bước
-            labels: RangeLabels(
-              _formatPrice(_minPrice),
-              _formatPrice(_maxPrice),
-            ),
-            onChanged: (values) {
+            divisions: 500, // 0.1 triệu mỗi bước tới 50tr
+            label: _formatPrice(_minPrice),
+            onChanged: (value) {
               setState(() {
-                _minPrice = values.start;
-                _maxPrice = values.end;
+                _minPrice = value;
               });
             },
           ),
           const SizedBox(height: 8),
-          // Price values
+          // Price value
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -94,12 +88,7 @@ class _PriceFilterSheetState extends State<PriceFilterSheet> {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              Text(
-                _formatPrice(_maxPrice),
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+              const Text(''),
             ],
           ),
           const SizedBox(height: 24),
@@ -109,9 +98,9 @@ class _PriceFilterSheetState extends State<PriceFilterSheet> {
               Expanded(
                 child: OutlinedButton(
                   onPressed: () {
-                    Navigator.of(context).pop();
+                    Navigator.of(context).pop({'clear': true});
                   },
-                  child: const Text('Hủy'),
+              child: const Text('Hủy'),
                 ),
               ),
               const SizedBox(width: 12),
@@ -120,8 +109,8 @@ class _PriceFilterSheetState extends State<PriceFilterSheet> {
                 child: FilledButton(
                   onPressed: () {
                     Navigator.of(context).pop({
-                      'minPrice': _minPrice,
-                      'maxPrice': _maxPrice,
+                      'minPrice': _minPrice > _minRange ? _minPrice : null,
+                      'maxPrice': null,
                     });
                   },
                   child: const Text('Áp dụng'),

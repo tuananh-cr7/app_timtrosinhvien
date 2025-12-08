@@ -11,13 +11,25 @@ import 'favorites_screen.dart';
 import 'room_list_screen.dart';
 import '../../core/models/api_result.dart';
 import '../../core/widgets/loading_error_widget.dart';
+import '../../core/widgets/offline_indicator.dart';
+import '../../core/services/connectivity_service.dart';
+import '../../core/services/offline_queue_service.dart';
+import 'data/repositories/favorites_repository.dart';
+import 'data/repositories/view_history_repository.dart';
 import '../notifications/screens/notifications_screen.dart';
 import '../notifications/data/repositories/notifications_repository.dart';
 import '../search/screens/search_screen.dart';
 
 /// Shell Trang chủ + BottomNavigationBar 5 tab theo thiết kế.
 class HomeShell extends StatefulWidget {
-  const HomeShell({super.key});
+  const HomeShell({
+    super.key,
+    required this.connectivityService,
+    required this.offlineQueueService,
+  });
+
+  final ConnectivityService connectivityService;
+  final OfflineQueueService offlineQueueService;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -65,7 +77,14 @@ class _HomeShellState extends State<HomeShell> {
     }
 
     return Scaffold(
-      body: SafeArea(child: body),
+      body: SafeArea(
+        child: Column(
+          children: [
+            OfflineIndicator(connectivityService: widget.connectivityService),
+            Expanded(child: body),
+          ],
+        ),
+      ),
       bottomNavigationBar: _buildBottomNavigationBar(theme),
     );
   }
@@ -138,9 +157,12 @@ class _HomeTab extends StatefulWidget {
 
 class _HomeTabState extends State<_HomeTab> {
   final _roomsRepository = RoomsRepository();
+   final _favoritesRepository = FavoritesRepository();
+   final _viewHistoryRepository = ViewHistoryRepository();
   late Future<ApiResult<List<Room>>> _latestRoomsFuture;
   late Future<ApiResult<List<Room>>> _sharedRoomsFuture;
   late Future<ApiResult<List<Room>>> _allRoomsFuture;
+   late Future<ApiResult<List<Room>>> _recommendedFuture;
 
   @override
   void initState() {
@@ -153,6 +175,7 @@ class _HomeTabState extends State<_HomeTab> {
       _latestRoomsFuture = _roomsRepository.getLatestRooms(limit: 6);
       _sharedRoomsFuture = _roomsRepository.getSharedRooms(limit: 6);
       _allRoomsFuture = _roomsRepository.getRooms(limit: 6);
+      _recommendedFuture = _loadRecommendations();
     });
   }
 
@@ -166,6 +189,55 @@ class _HomeTabState extends State<_HomeTab> {
         return mockAllRooms;
       default:
         return [];
+    }
+  }
+
+  Future<ApiResult<List<Room>>> _loadRecommendations() async {
+    try {
+      // Lấy phòng gốc từ favorites hoặc view history để xác định khu vực/giá tham chiếu
+      Room? anchor;
+      final favResult = await _favoritesRepository.getFavoriteRooms();
+      if (favResult is ApiSuccess<List<Room>> && favResult.data.isNotEmpty) {
+        anchor = favResult.data.first;
+      } else {
+        final historyResult = await _viewHistoryRepository.getHistory(limit: 50);
+        if (historyResult is ApiSuccess<List<ViewHistoryEntry>> && historyResult.data.isNotEmpty) {
+          anchor = historyResult.data.first.room;
+        }
+      }
+
+      // Lấy danh sách phòng mới nhất để đề xuất
+      final roomsResult = await _roomsRepository.getRooms(limit: 50, useCache: true);
+      if (roomsResult is! ApiSuccess<List<Room>>) {
+        return ApiSuccess(_getFallbackRooms('latest'));
+      }
+      var rooms = roomsResult.data;
+
+      // Nếu có anchor, lọc theo khu vực và giá ±20%
+      if (anchor != null) {
+        final targetCity = anchor.city;
+        final targetDistrict = anchor.district;
+        final targetPrice = anchor.priceMillion;
+        rooms = rooms.where((r) {
+          final matchCity = targetCity == null || r.city == targetCity;
+          final matchDistrict = targetDistrict == null || r.district == targetDistrict;
+          final matchPrice = targetPrice == null
+              ? true
+              : (r.priceMillion >= targetPrice * 0.8 && r.priceMillion <= targetPrice * 1.2);
+          return matchCity && matchDistrict && matchPrice && r.id != anchor!.id;
+        }).toList();
+      }
+
+      // Nếu lọc xong trống, fallback về phòng mới đăng
+      if (rooms.isEmpty) {
+        rooms = _getFallbackRooms('latest');
+      }
+
+      // Giới hạn 6 mục
+      return ApiSuccess(rooms.take(6).toList());
+    } catch (e) {
+      print('⚠️ Lỗi load recommendations: $e');
+      return ApiSuccess(_getFallbackRooms('latest'));
     }
   }
 
@@ -216,6 +288,64 @@ class _HomeTabState extends State<_HomeTab> {
                 const SizedBox(height: 16),
               ],
             ),
+          ),
+        ),
+        // Gợi ý cho bạn
+        SliverToBoxAdapter(
+          child: _SectionHeader(
+            title: 'Gợi ý cho bạn',
+            onSeeAll: () => _openListFromFuture(
+              context,
+              'Gợi ý cho bạn',
+              _recommendedFuture,
+            ),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: FutureBuilder<ApiResult<List<Room>>>(
+            future: _recommendedFuture,
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return const SizedBox(
+                  height: 200,
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+
+              final result = snapshot.data!;
+              final rooms = result.dataOrNull ?? _getFallbackRooms('latest');
+
+              if (rooms.isEmpty) {
+                return const SizedBox.shrink();
+              }
+
+              return LoadingErrorWidget(
+                result: result,
+                onRetry: _loadData,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 0.78,
+                    ),
+                    itemCount: rooms.length.clamp(0, 6),
+                    itemBuilder: (context, index) {
+                      final room = rooms[index];
+                      return RoomCard(
+                        room: room,
+                        onTap: () => _openDetail(context, room),
+                      );
+                    },
+                  ),
+                ),
+              );
+            },
           ),
         ),
         // Phòng mới đăng
@@ -422,7 +552,7 @@ void _openList(BuildContext context, String title, List<Room> rooms) {
     MaterialPageRoute(
       builder: (_) => RoomListScreen(
         title: title,
-        rooms: List.from(rooms),
+        initialRooms: List.from(rooms),
       ),
     ),
   );
@@ -454,137 +584,24 @@ class _RoomListScreenFromFuture extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(title)),
-      body: FutureBuilder<ApiResult<List<Room>>>(
-        future: future,
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          final result = snapshot.data!;
-          final rooms = result.dataOrNull ?? [];
-
-          return LoadingErrorWidget(
-            result: result,
-            onRetry: () {
-              // Retry logic nếu cần
-            },
-            child: ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: rooms.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                final room = rooms[index];
-                return InkWell(
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => RoomDetailScreen(room: room),
-                      ),
-                    );
-                  },
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.network(
-                          room.thumbnailUrl,
-                          width: 110,
-                          height: 80,
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.primary,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                '${room.priceMillion.toStringAsFixed(1)} triệu',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodySmall
-                                    ?.copyWith(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              room.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleSmall
-                                  ?.copyWith(
-                                fontWeight: FontWeight.w600,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                const Icon(Icons.location_on_outlined,
-                                    size: 14, color: Colors.grey),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    room.address,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall
-                                        ?.copyWith(
-                                      color: Colors.grey.shade300,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 2),
-                            Row(
-                              children: [
-                                const Icon(Icons.square_foot_outlined,
-                                    size: 14, color: Colors.grey),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'Diện tích ${room.area.toStringAsFixed(0)} m2',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodySmall
-                                      ?.copyWith(
-                                    color: Colors.grey.shade300,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
+    return FutureBuilder<ApiResult<List<Room>>>(
+      future: future,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return Scaffold(
+            appBar: AppBar(title: Text(title)),
+            body: const Center(child: CircularProgressIndicator()),
           );
-        },
-      ),
+        }
+
+        final result = snapshot.data!;
+        final initialRooms = result.dataOrNull ?? [];
+
+        return RoomListScreen(
+          title: title,
+          initialRooms: initialRooms,
+        );
+      },
     );
   }
 }

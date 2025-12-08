@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
 import '../../home/home_shell.dart';
+import '../../../core/services/service_locator.dart';
 import 'login_screen.dart';
 
 /// Màn hình xác thực email.
@@ -34,10 +35,26 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
 
       if (isVerified) {
         // Email đã được verify → vào app
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const HomeShell()),
-          (route) => false,
-        );
+        // Lấy services từ ServiceLocator
+        final connectivityService = ServiceLocator.connectivityService;
+        final offlineQueueService = ServiceLocator.offlineQueueService;
+        if (connectivityService != null && offlineQueueService != null) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(
+              builder: (_) => HomeShell(
+                connectivityService: connectivityService,
+                offlineQueueService: offlineQueueService,
+              ),
+            ),
+            (route) => false,
+          );
+        } else {
+          // Fallback nếu services chưa được init (không nên xảy ra)
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const Scaffold(body: Center(child: Text('Đang khởi tạo...')))),
+            (route) => false,
+          );
+        }
       } else {
         // Chưa verify → hiển thị thông báo
         ScaffoldMessenger.of(context).showSnackBar(

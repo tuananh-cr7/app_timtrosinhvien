@@ -5,6 +5,7 @@ class HiveService {
   static const String _roomsBoxName = 'rooms_cache';
   static const String _viewHistoryBoxName = 'view_history_cache';
   static const String _favoritesBoxName = 'favorites_cache';
+  static const String _offlineQueueBoxName = 'offline_queue';
 
   /// Khởi tạo Hive và mở các boxes.
   static Future<void> init() async {
@@ -13,6 +14,7 @@ class HiveService {
     await Hive.openBox(_roomsBoxName);
     await Hive.openBox(_viewHistoryBoxName);
     await Hive.openBox(_favoritesBoxName);
+    await Hive.openBox(_offlineQueueBoxName);
   }
 
   /// Lấy box cho rooms cache.

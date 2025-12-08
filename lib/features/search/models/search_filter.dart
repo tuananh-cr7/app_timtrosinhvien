@@ -12,6 +12,7 @@ class SearchFilter {
     this.amenities = const [],
     this.availableItems = const [],
     this.roomType,
+    this.maxPeople,
   });
 
   final String query; // Từ khóa tìm kiếm
@@ -25,6 +26,7 @@ class SearchFilter {
   final List<String> amenities; // Tiện ích: wifi, wc_rieng, giu_xe, etc.
   final List<String> availableItems; // Đồ dùng: giuong, tu_quan_ao, etc.
   final RoomTypeFilter? roomType; // Loại phòng
+  final int? maxPeople; // Số người tối đa
 
   /// Tạo filter mặc định (rỗng).
   factory SearchFilter.empty() {
@@ -43,7 +45,8 @@ class SearchFilter {
         isShared != null ||
         amenities.isNotEmpty ||
         availableItems.isNotEmpty ||
-        roomType != null;
+        roomType != null ||
+        maxPeople != null;
   }
 
   /// Reset tất cả filters.
@@ -59,6 +62,7 @@ class SearchFilter {
     List<String>? amenities,
     List<String>? availableItems,
     RoomTypeFilter? roomType,
+    int? maxPeople,
     bool clearCity = false,
     bool clearDistrict = false,
     bool clearMinPrice = false,
@@ -67,6 +71,7 @@ class SearchFilter {
     bool clearMaxArea = false,
     bool clearIsShared = false,
     bool clearRoomType = false,
+    bool clearMaxPeople = false,
   }) {
     return SearchFilter(
       query: query ?? this.query,
@@ -80,6 +85,7 @@ class SearchFilter {
       amenities: amenities ?? this.amenities,
       availableItems: availableItems ?? this.availableItems,
       roomType: clearRoomType ? null : (roomType ?? this.roomType),
+      maxPeople: clearMaxPeople ? null : (maxPeople ?? this.maxPeople),
     );
   }
 

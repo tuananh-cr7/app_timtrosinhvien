@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../../core/models/api_result.dart';
+import '../../../../core/services/service_locator.dart';
+import '../../../../core/services/offline_queue_service.dart';
 import '../../models/room.dart';
 import 'rooms_repository.dart';
 
@@ -20,6 +22,23 @@ class ViewHistoryRepository {
         return ApiError('Chưa đăng nhập');
       }
 
+      // Kiểm tra connectivity
+      final connectivityService = ServiceLocator.connectivityService;
+      final offlineQueueService = ServiceLocator.offlineQueueService;
+      
+      if (connectivityService != null && !connectivityService.isOnline) {
+        // Offline: queue operation
+        if (offlineQueueService != null) {
+          await offlineQueueService.queueOperation(QueuedOperation(
+            type: QueuedOperationType.logView,
+            data: {'roomId': roomId},
+          ));
+          print('📝 Đã queue logView (offline): roomId=$roomId');
+          return ApiSuccess(null);
+        }
+      }
+
+      // Online: thực hiện ngay
       // Kiểm tra xem đã có chưa
       final existing = await _firestore
           .collection(_collectionName)
@@ -45,6 +64,16 @@ class ViewHistoryRepository {
 
       return ApiSuccess(null);
     } catch (e) {
+      // Nếu lỗi network, thử queue
+      final offlineQueueService = ServiceLocator.offlineQueueService;
+      if (offlineQueueService != null && e.toString().contains('network')) {
+        await offlineQueueService.queueOperation(QueuedOperation(
+          type: QueuedOperationType.logView,
+          data: {'roomId': roomId},
+        ));
+        print('📝 Đã queue logView (network error): roomId=$roomId');
+        return ApiSuccess(null);
+      }
       return ApiError('Không thể ghi lịch sử xem: ${e.toString()}', e);
     }
   }

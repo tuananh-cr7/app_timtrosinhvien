@@ -6,32 +6,23 @@ class AreaFilterSheet extends StatefulWidget {
   const AreaFilterSheet({
     super.key,
     this.initialMinArea,
-    this.initialMaxArea,
   });
 
   final double? initialMinArea;
-  final double? initialMaxArea;
 
   @override
   State<AreaFilterSheet> createState() => _AreaFilterSheetState();
 }
 
 class _AreaFilterSheetState extends State<AreaFilterSheet> {
-  final _minAreaController = TextEditingController();
-  final _maxAreaController = TextEditingController();
+  final double _minRange = 0;
+  final double _maxRange = 300; // tối đa 300 m²
+  double _minArea = 0;
 
   @override
   void initState() {
     super.initState();
-    _minAreaController.text = widget.initialMinArea?.toStringAsFixed(0) ?? '';
-    _maxAreaController.text = widget.initialMaxArea?.toStringAsFixed(0) ?? '';
-  }
-
-  @override
-  void dispose() {
-    _minAreaController.dispose();
-    _maxAreaController.dispose();
-    super.dispose();
+    _minArea = (widget.initialMinArea ?? 0).clamp(_minRange, _maxRange);
   }
 
   @override
@@ -59,58 +50,36 @@ class _AreaFilterSheetState extends State<AreaFilterSheet> {
           ),
           // Title
           Text(
-            'Diện tích (m²)',
+            'Diện tích tối thiểu (m²)',
             style: theme.textTheme.titleLarge?.copyWith(
               fontWeight: FontWeight.bold,
             ),
           ),
           const SizedBox(height: 24),
-          // Input fields
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _minAreaController,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly,
-                  ],
-                  decoration: const InputDecoration(
-                    labelText: 'Từ',
-                    hintText: '0',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: TextField(
-                  controller: _maxAreaController,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly,
-                  ],
-                  decoration: const InputDecoration(
-                    labelText: 'Đến',
-                    hintText: '500',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-            ],
+          // Slider
+          Slider(
+            value: _minArea,
+            min: _minRange,
+            max: _maxRange,
+            divisions: (_maxRange - _minRange).toInt(), // bước 1 m²
+            label: '${_minArea.toStringAsFixed(0)} m²',
+            onChanged: (v) => setState(() => _minArea = v),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${_minArea.toStringAsFixed(0)} m²',
+            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 24),
           // Buttons
           Row(
             children: [
               Expanded(
-                child: TextButton(
+                child: OutlinedButton(
                   onPressed: () {
-                    _minAreaController.clear();
-                    _maxAreaController.clear();
-                    setState(() {});
+                    Navigator.of(context).pop({'clear': true});
                   },
-                  child: const Text('Xóa lọc'),
+                  child: const Text('Hủy'),
                 ),
               ),
               const SizedBox(width: 12),
@@ -118,11 +87,9 @@ class _AreaFilterSheetState extends State<AreaFilterSheet> {
                 flex: 2,
                 child: FilledButton(
                   onPressed: () {
-                    final minArea = double.tryParse(_minAreaController.text);
-                    final maxArea = double.tryParse(_maxAreaController.text);
                     Navigator.of(context).pop({
-                      'minArea': minArea,
-                      'maxArea': maxArea,
+                      'minArea': _minArea > 0 ? _minArea : null,
+                      'maxArea': null,
                     });
                   },
                   child: const Text('Áp dụng'),

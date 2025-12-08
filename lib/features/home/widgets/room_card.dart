@@ -15,6 +15,23 @@ class RoomCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    String? typeLabel;
+    switch ((room.roomType ?? '').toLowerCase()) {
+      case 'room':
+        typeLabel = 'Phòng';
+        break;
+      case 'apartment':
+        typeLabel = 'Căn hộ';
+        break;
+      case 'mini_apartment':
+        typeLabel = 'Căn hộ mini';
+        break;
+      case 'entire_place':
+        typeLabel = 'Nguyên căn';
+        break;
+      default:
+        typeLabel = null;
+    }
 
     return InkWell(
       borderRadius: BorderRadius.circular(16),
@@ -135,6 +152,31 @@ class RoomCard extends StatelessWidget {
                       color: Colors.grey.shade800,
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  if (typeLabel != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.apartment, size: 14, color: Colors.black54),
+                          const SizedBox(width: 4),
+                          Text(
+                            typeLabel,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: Colors.black87,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),

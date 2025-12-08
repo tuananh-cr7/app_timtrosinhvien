@@ -430,6 +430,23 @@ class _PostListingFlowState extends State<PostListingFlow> {
           ? addressParts.join(', ')
           : '${_draft!.district}, ${_draft!.city}';
 
+      // Map roomType enum to string key used in search/filter
+      String roomTypeKey;
+      switch (_draft!.roomType) {
+        case RoomType.room:
+          roomTypeKey = 'room';
+          break;
+        case RoomType.apartment:
+          roomTypeKey = 'apartment';
+          break;
+        case RoomType.miniApartment:
+          roomTypeKey = 'mini_apartment';
+          break;
+        case RoomType.entirePlace:
+          roomTypeKey = 'entire_place';
+          break;
+      }
+
       // Tạo room data từ draft
       final roomData = {
         'title': _draft!.title.trim(),
@@ -440,6 +457,7 @@ class _PostListingFlowState extends State<PostListingFlow> {
         'area': _draft!.area,
         'thumbnailUrl': _draft!.images.isNotEmpty ? _draft!.images[0] : '',
         'isShared': _draft!.postType == PostType.findRoommate,
+        'roomType': roomTypeKey,
         'description': _draft!.description.trim(),
         'ownerId': user.uid,
         'ownerName': _draft!.contactName.trim(),

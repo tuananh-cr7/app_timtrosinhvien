@@ -12,6 +12,10 @@ import 'core/cache/hive_service.dart';
 import 'core/services/fcm_service.dart';
 import 'core/services/presence_service.dart';
 import 'core/services/notification_navigation_service.dart';
+import 'core/services/connectivity_service.dart';
+import 'core/services/offline_queue_service.dart';
+import 'core/services/service_locator.dart';
+import 'core/widgets/offline_indicator.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -50,19 +54,43 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  late final ConnectivityService _connectivityService;
+  late final OfflineQueueService _offlineQueueService;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     
+    // Khởi tạo connectivity và offline queue services
+    _connectivityService = ConnectivityService();
+    _offlineQueueService = OfflineQueueService(_connectivityService);
+    
+    // Đăng ký services vào service locator
+    ServiceLocator.register(
+      connectivityService: _connectivityService,
+      offlineQueueService: _offlineQueueService,
+    );
+    
+    // Lắng nghe connectivity changes để sync queue khi online
+    _connectivityService.addListener(_onConnectivityChanged);
+    
     // Set navigator key cho NotificationNavigationService
     // Note: NotificationNavigationService sẽ dùng context từ navigator
+  }
+
+  void _onConnectivityChanged() {
+    if (_connectivityService.isOnline) {
+      // Sync queue khi online
+      _offlineQueueService.syncQueue();
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _connectivityService.removeListener(_onConnectivityChanged);
+    _connectivityService.dispose();
     super.dispose();
   }
 
@@ -100,14 +128,23 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       debugShowCheckedModeBanner: false,
       theme: theme,
       navigatorKey: _navigatorKey,
-      home: const _RootDecider(),
+      home: _RootDecider(
+        connectivityService: _connectivityService,
+        offlineQueueService: _offlineQueueService,
+      ),
     );
   }
 }
 
 /// Quyết định flow: Splash -> Onboarding (nếu chưa xem) -> Auth check -> Home/Login.
 class _RootDecider extends StatefulWidget {
-  const _RootDecider();
+  const _RootDecider({
+    required this.connectivityService,
+    required this.offlineQueueService,
+  });
+
+  final ConnectivityService connectivityService;
+  final OfflineQueueService offlineQueueService;
 
   @override
   State<_RootDecider> createState() => _RootDeciderState();
@@ -117,6 +154,9 @@ class _RootDeciderState extends State<_RootDecider> {
   bool _showSplash = true;
   bool _hasSeenOnboarding = false;
   firebase_auth.User? _user;
+  bool _isCheckingBan = false;
+  bool _isBanned = false;
+  String? _banReason;
 
   @override
   void initState() {
@@ -131,6 +171,8 @@ class _RootDeciderState extends State<_RootDecider> {
       if (mounted) {
         setState(() {
           _user = user;
+          _isBanned = false;
+          _banReason = null;
         });
         
         // Khởi tạo presence service khi user đăng nhập
@@ -139,6 +181,9 @@ class _RootDeciderState extends State<_RootDecider> {
           
           // Tự động lưu user info vào users collection nếu chưa có
           await _ensureUserDocument(user);
+
+          // Kiểm tra trạng thái khóa tài khoản
+          await _checkBan(user);
         }
       }
     });
@@ -202,6 +247,40 @@ class _RootDeciderState extends State<_RootDecider> {
     }
   }
 
+  /// Kiểm tra xem user có bị khóa không. Nếu bị khóa, sẽ hiển thị thông báo và không cho vào app.
+  Future<void> _checkBan(firebase_auth.User user) async {
+    setState(() {
+      _isCheckingBan = true;
+      _isBanned = false;
+      _banReason = null;
+    });
+    try {
+      // Luôn lấy từ server để không dính cache cũ
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get(const GetOptions(source: Source.server));
+      final data = doc.data();
+      final banned = data?['banned'] == true;
+      final reason = data?['banReason'] as String?;
+      if (banned) {
+        setState(() {
+          _isBanned = true;
+          _banReason = reason;
+        });
+      }
+    } catch (e) {
+      // Nếu lỗi, không chặn nhưng log ra
+      debugPrint('⚠️ Lỗi kiểm tra khóa tài khoản: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCheckingBan = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_showSplash) {
@@ -232,6 +311,47 @@ class _RootDeciderState extends State<_RootDecider> {
       return const LoginScreen();
     }
 
+    // Đang kiểm tra trạng thái khóa
+    if (_isCheckingBan) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // Bị khóa tài khoản
+    if (_isBanned) {
+      return Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.block, color: Colors.red, size: 48),
+                const SizedBox(height: 12),
+                const Text(
+                  'Tài khoản của bạn đã bị khóa',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _banReason ?? 'Vui lòng liên hệ quản trị viên để biết thêm chi tiết.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () async {
+                    await firebase_auth.FirebaseAuth.instance.signOut();
+                  },
+                  child: const Text('Đăng xuất'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     // Đã đăng nhập nhưng chưa verify email → Email Verification
     if (!_user!.emailVerified) {
       return EmailVerificationScreen(email: _user!.email!);
@@ -247,6 +367,9 @@ class _RootDeciderState extends State<_RootDecider> {
       }
     });
     
-    return const HomeShell();
+    return HomeShell(
+      connectivityService: widget.connectivityService,
+      offlineQueueService: widget.offlineQueueService,
+    );
   }
 }

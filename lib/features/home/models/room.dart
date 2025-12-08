@@ -11,6 +11,8 @@ class Room {
     required this.area,
     required this.thumbnailUrl,
     this.isShared = false,
+    this.roomType,
+    this.maxPeople,
     this.description,
     this.createdAt,
     this.updatedAt,
@@ -34,6 +36,8 @@ class Room {
   final double area; // m²
   final String thumbnailUrl;
   final bool isShared;
+  final String? roomType; // room, apartment, mini_apartment, entire_place
+  final int? maxPeople;
   final String? description;
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -60,6 +64,8 @@ class Room {
       area: (data['area'] ?? 0).toDouble(),
       thumbnailUrl: data['thumbnailUrl'] ?? '',
       isShared: data['isShared'] ?? false,
+      roomType: data['roomType'],
+      maxPeople: data['maxPeople'] ?? data['max_people'],
       description: data['description'],
       createdAt: data['createdAt']?.toDate(),
       updatedAt: data['updatedAt']?.toDate(),
@@ -93,6 +99,8 @@ class Room {
       'area': area,
       'thumbnailUrl': thumbnailUrl,
       'isShared': isShared,
+      'roomType': roomType,
+      'maxPeople': maxPeople,
       'description': description,
       'createdAt': createdAt?.millisecondsSinceEpoch,
       'updatedAt': updatedAt?.millisecondsSinceEpoch,
@@ -120,6 +128,8 @@ class Room {
       area: (json['area'] ?? 0).toDouble(),
       thumbnailUrl: json['thumbnailUrl'] ?? '',
       isShared: json['isShared'] ?? false,
+      roomType: json['roomType'],
+      maxPeople: json['maxPeople'],
       description: json['description'],
       createdAt: json['createdAt'] != null
           ? DateTime.fromMillisecondsSinceEpoch(json['createdAt'])

@@ -18,9 +18,11 @@ class RoomsRepository {
   /// 
   /// [useCache]: Nếu true, sẽ trả về cache nếu còn hợp lệ, nếu false sẽ force fetch từ server.
   /// [limit]: Giới hạn số lượng phòng trả về.
+  /// [lastDocument]: Document snapshot cuối cùng để pagination (cho infinite scroll).
   Future<ApiResult<List<Room>>> getRooms({
     bool useCache = true,
     int? limit,
+    DocumentSnapshot? lastDocument,
   }) async {
     try {
       // Kiểm tra cache nếu được yêu cầu
@@ -47,6 +49,12 @@ class RoomsRepository {
       // Lưu ý: orderBy có thể fail khi query, nên sẽ catch ở ngoài
       try {
         query = query.orderBy('createdAt', descending: true);
+        
+        // Pagination: startAfter lastDocument nếu có
+        if (lastDocument != null) {
+          query = query.startAfterDocument(lastDocument);
+        }
+        
         if (limit != null) {
           query = query.limit(limit);
         }

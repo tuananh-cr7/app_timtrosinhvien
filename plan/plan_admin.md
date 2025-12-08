@@ -1,44 +1,47 @@
-## Plan Admin – Tương ứng cụm chức năng 11.1 – 11.9 (Admin riêng)
+## Plan Admin (web) – phù hợp đồ án hiện tại
 
-> Thực hiện sau khi app chính ổn định. Có thể dùng Flutter Web/React/Next.js.  
+> Làm admin dạng web (Flutter Web hoặc React), dùng chung Firestore/Storage/Firebase Auth.
 
-### Phase A – Cơ bản (mục 11.1 – 11.2)
-- Thiết lập dự án web admin, kết nối API chung.
-- Màn hình Đăng nhập Admin (JWT, phân quyền Super Admin/Admin/Moderator).
-- Dashboard cơ bản:
-  - Thống kê tổng: người dùng, tin đăng, tin chờ duyệt, báo cáo mới.
-  - Hoạt động gần đây (tin đăng mới, user mới).
-  - Sidebar nav + header user info, notifications.
+### Kiến trúc & bảo mật
+- Auth: Firebase Auth + custom claims `admin=true`, guard toàn bộ trang admin.
+- Deploy: Firebase Hosting; dùng Cloud Functions nếu cần batch/cron.
+- RBAC đơn giản: super-admin / admin / moderator (nếu cần).
 
-### Phase B – Quản lý tin đăng (mục 11.3)
-- **Quy trình duyệt tin:**
-  - User đăng tin → Status: `pending` (chờ duyệt) → Hiển thị trong "Tin đã đăng" của user (tab "Đang chờ duyệt")
-  - Admin duyệt → Status: `active` → Tin hiển thị ở trang chủ
-  - Admin từ chối → Status: `rejected` → Hiển thị trong "Tin đã đăng" của user (tab "Đã từ chối")
-  - User có thể ẩn tin → Status: `hidden` → Không hiển thị ở trang chủ
-  - Tin đã cho thuê → Status: `rented` → Không hiển thị ở trang chủ
-- Bảng danh sách tin với filter trạng thái/khu vực/loại tin.
-- Chi tiết tin đăng với carousel, stats, action (Duyệt/Từ chối/Ẩn/Xóa/Gia hạn/Ghim).
-- Bulk actions + lý do từ chối + gửi thông báo cho người đăng.
-- **Trang chủ chỉ hiển thị tin có status = 'active'**
+### Phase A – Khởi tạo & đăng nhập
+- Thiết lập dự án web admin, kết nối Firestore/Storage/Firebase Auth.
+- Màn Đăng nhập Admin (Email/Password), kiểm tra custom claims.
+- Dashboard cơ bản: số user, số tin, tin chờ duyệt, báo cáo mới; hoạt động gần đây.
 
-### Phase C – Quản lý người dùng (mục 11.4)
-- Danh sách user (vai trò, trạng thái, số tin đã đăng).
-- Chi tiết user: thông tin cá nhân, thống kê, danh sách tin, lịch sử hoạt động.
-- Actions: Khóa/Mở khóa, Reset password, Gửi thông báo, Xác thực email thủ công.
+### Phase B – Quản lý tin đăng
+- Quy trình trạng thái: pending → active → rented/hidden/rejected.
+- Bảng tin với filter: trạng thái, chủ tin, ngày đăng, giá, diện tích, loại phòng.
+- Chi tiết tin: ảnh, mô tả, stats, action (Duyệt/Từ chối/Ẩn/Xóa/Gia hạn/Ghim), lý do từ chối + gửi thông báo cho người đăng.
 
-### Phase D – Báo cáo & Nhật ký (mục 11.5 + 11.8)
-- Module báo cáo: danh sách, chi tiết, xử lý (Chấp nhận/Từ chối, yêu cầu thêm info).
-- Thống kê báo cáo (loại, tỷ lệ xử lý, top user bị báo cáo).
-- Activity logs: ghi lại thao tác admin/user quan trọng, filter theo loại hành động.
+### Phase C – Quản lý người dùng
+- Danh sách user (role, trạng thái, số tin đã đăng).
+- Chi tiết user: info, thống kê, danh sách tin, lịch sử hoạt động.
+- Actions: Ban/Unban, Reset password, gửi thông báo, xác thực email thủ công.
 
-### Phase E – Thống kê & Cài đặt (mục 11.6 + 11.7)
-- Trang “Thống kê & Báo cáo”: biểu đồ user/tin/tương tác, export CSV/PDF, lịch gửi email báo cáo.
-- Trang “Cài đặt hệ thống”: cấu hình tin đăng (ảnh tối đa, thời gian hiển thị), thông báo, bảo mật, backup.
+### Phase D – Báo cáo & Nhật ký
+- Báo cáo: danh sách, chi tiết, xử lý (Chấp nhận/Từ chối), khóa tin/khoá user nếu cần.
+- Activity logs: ghi thao tác admin (duyệt/ẩn/xóa tin, ban user, gửi thông báo).
 
-### Phase F – Quản lý Admin & nâng cao (phần còn lại của 11.7 + 11.9)
-- Quản lý tài khoản admin: danh sách, tạo mới, phân quyền chi tiết (RBAC).
-- Log đăng nhập admin, khóa/mở khóa admin, 2FA (nếu cần).
-- Module hỗ trợ chat takeover (admin tham gia cuộc chat) – optional.
+### Phase E – Thống kê & Cấu hình
+- Thống kê: đếm tin mới/bị từ chối/đã cho thuê theo thời gian; lượt báo cáo.
+- Cấu hình: danh mục tiện ích/đồ dùng, giới hạn giá/diện tích, loại phòng, thông báo.
+
+### Phase F – Quản trị admin
+- Quản lý tài khoản admin (tạo/sửa/xóa, phân quyền).
+- Log đăng nhập admin, 2FA (nếu kịp).
+
+### Ưu tiên triển khai
+1) Đăng nhập + guard admin (custom claims).
+2) Quản lý tin: list + duyệt/ẩn/xóa + filter cơ bản.
+3) Báo cáo: list + đánh dấu xử lý.
+4) Thông báo trạng thái tin (duyệt/từ chối).
+5) Thống kê đếm đơn giản.
+6) Quản lý user (ban/unban).
+7) Activity logs.
+8) Cấu hình danh mục & giới hạn (tiện ích, đồ dùng, giá/diện tích, loại phòng).
 
 

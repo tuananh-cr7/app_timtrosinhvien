@@ -49,7 +49,7 @@ class _PostedRoomsManagementScreenState
     super.dispose();
   }
 
-  Future<List<Room>> _loadRooms(RoomStatus status) async {
+  Future<List<Room>> _loadRooms(RoomStatus status, {bool loadMore = false}) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       print('⚠️  _loadRooms: User chưa đăng nhập');
@@ -58,7 +58,7 @@ class _PostedRoomsManagementScreenState
 
     // Chuyển đổi RoomStatus enum sang string
     final statusString = _statusToString(status);
-    print('📊 _loadRooms: Đang load rooms với status=$statusString cho user=${user.uid}');
+    print('📊 _loadRooms: Đang load rooms với status=$statusString cho user=${user.uid}, loadMore=$loadMore');
 
     final result = await _roomsRepository.getRoomsByOwner(user.uid);
     return switch (result) {
@@ -66,9 +66,6 @@ class _PostedRoomsManagementScreenState
         () {
           final filtered = rooms.where((room) => room.status == statusString).toList();
           print('📊 _loadRooms: Tìm thấy ${rooms.length} rooms, sau khi filter status=$statusString còn ${filtered.length} rooms');
-          for (final room in rooms) {
-            print('  - Room ${room.id}: status=${room.status}, title=${room.title}');
-          }
           return filtered;
         }(),
       _ => () {
