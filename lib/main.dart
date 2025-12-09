@@ -157,6 +157,7 @@ class _RootDeciderState extends State<_RootDecider> {
   bool _isCheckingBan = false;
   bool _isBanned = false;
   String? _banReason;
+  bool _isAdminBlocked = false;
 
   @override
   void initState() {
@@ -173,6 +174,7 @@ class _RootDeciderState extends State<_RootDecider> {
           _user = user;
           _isBanned = false;
           _banReason = null;
+          _isAdminBlocked = false;
         });
         
         // Khởi tạo presence service khi user đăng nhập
@@ -181,6 +183,13 @@ class _RootDeciderState extends State<_RootDecider> {
           
           // Tự động lưu user info vào users collection nếu chưa có
           await _ensureUserDocument(user);
+
+          // Nếu là admin claim, chặn đăng nhập app người dùng
+          final blocked = await _checkAdminClaim(user);
+          if (blocked) {
+            await firebase_auth.FirebaseAuth.instance.signOut();
+            return;
+          }
 
           // Kiểm tra trạng thái khóa tài khoản
           await _checkBan(user);
@@ -281,6 +290,25 @@ class _RootDeciderState extends State<_RootDecider> {
     }
   }
 
+  /// Chặn tài khoản có claim admin/role admin đăng nhập app người dùng.
+  Future<bool> _checkAdminClaim(firebase_auth.User user) async {
+    try {
+      final token = await user.getIdTokenResult(true);
+      final claims = token.claims ?? {};
+      final isAdmin =
+          claims['admin'] == true || claims['role'] == 'admin' || claims['role'] == 'super_admin';
+      if (isAdmin) {
+        if (mounted) {
+          setState(() => _isAdminBlocked = true);
+        }
+        return true;
+      }
+    } catch (e) {
+      debugPrint('⚠️ Lỗi kiểm tra admin claim: $e');
+    }
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_showSplash) {
@@ -302,6 +330,44 @@ class _RootDeciderState extends State<_RootDecider> {
             _hasSeenOnboarding = true;
           });
         },
+      );
+    }
+
+    // Nếu phát hiện claim admin, chặn đăng nhập app người dùng
+    if (_isAdminBlocked) {
+      return Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.verified_user, color: Colors.orange, size: 48),
+                const SizedBox(height: 12),
+                const Text(
+                  'Tài khoản này là admin, không thể đăng nhập ứng dụng người dùng.',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Hãy dùng trang Admin (main_admin.dart) để truy cập chức năng quản trị.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () async {
+                    await firebase_auth.FirebaseAuth.instance.signOut();
+                    if (mounted) {
+                      setState(() => _isAdminBlocked = false);
+                    }
+                  },
+                  child: const Text('Đăng xuất'),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
 

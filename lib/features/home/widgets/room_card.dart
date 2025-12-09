@@ -100,7 +100,7 @@ class RoomCard extends StatelessWidget {
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 10,
-                        vertical: 4,
+                      vertical: 3,
                       ),
                       decoration: BoxDecoration(
                         color: theme.colorScheme.primary.withOpacity(0.9),
@@ -140,19 +140,26 @@ class RoomCard extends StatelessWidget {
             ),
             Padding(
               padding:
-                  const EdgeInsets.only(left: 12, right: 12, bottom: 12, top: 4),
-              child: Row(
+                  const EdgeInsets.only(left: 12, right: 12, bottom: 8, top: 4),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  const Icon(Icons.square_foot_outlined,
-                      size: 16, color: Colors.grey),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${room.area.toStringAsFixed(0)} m²',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: Colors.grey.shade800,
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.square_foot_outlined,
+                          size: 16, color: Colors.grey),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${room.area.toStringAsFixed(0)} m²',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
                   if (typeLabel != null)
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -164,6 +171,7 @@ class RoomCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           const Icon(Icons.apartment, size: 14, color: Colors.black54),
                           const SizedBox(width: 4),
