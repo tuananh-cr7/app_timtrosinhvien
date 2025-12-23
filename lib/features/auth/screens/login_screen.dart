@@ -155,21 +155,8 @@ class _LoginScreenState extends State<LoginScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const SizedBox(height: 40),
-                // Title
-                Text(
-                  'Chào mừng trở lại 👋',
-                  style: theme.textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Đăng nhập để tiếp tục khám phá Nhà Trọ 360',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: Colors.grey.shade700,
-                  ),
-                ),
-                const SizedBox(height: 32),
+                // Title removed per request
+                const SizedBox(height: 16),
                 // Email field
                 TextFormField(
                   controller: _emailController,

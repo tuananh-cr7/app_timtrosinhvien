@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'models/room.dart';
 import 'favorites_manager.dart';
@@ -29,6 +30,8 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
   final _favoritesRepository = FavoritesRepository();
   final PageController _pageController = PageController();
   int _currentImageIndex = 0;
+  double _avgRating = 0;
+  int _reviewCount = 0;
 
   @override
   void initState() {
@@ -41,6 +44,325 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
   void dispose() {
     _pageController.dispose();
     super.dispose();
+  }
+
+  Widget _buildRatingSummary() {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('rooms')
+          .doc(widget.room.id)
+          .collection('reviews')
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return Row(
+            children: const [
+              Icon(Icons.star_border, color: Colors.amber, size: 20),
+              SizedBox(width: 4),
+              Text('Chưa có đánh giá'),
+            ],
+          );
+        }
+        final docs = snapshot.data!.docs;
+        if (docs.isEmpty) {
+          return Row(
+            children: const [
+              Icon(Icons.star_border, color: Colors.amber, size: 20),
+              SizedBox(width: 4),
+              Text('Chưa có đánh giá'),
+            ],
+          );
+        }
+        double sum = 0;
+        for (final d in docs) {
+          final rating = (d.data()['rating'] as num?)?.toDouble() ?? 0;
+          sum += rating;
+        }
+        final avg = sum / docs.length;
+        _avgRating = avg;
+        _reviewCount = docs.length;
+        return Row(
+          children: [
+            const Icon(Icons.star, color: Colors.amber, size: 20),
+            const SizedBox(width: 4),
+            Text(
+              avg.toStringAsFixed(1),
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(width: 4),
+            Text('(${docs.length} đánh giá)'),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _openReviewDialog() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Bạn cần đăng nhập để đánh giá.')),
+      );
+      return;
+    }
+
+    final docRef = FirebaseFirestore.instance
+        .collection('rooms')
+        .doc(widget.room.id)
+        .collection('reviews')
+        .doc(user.uid);
+
+    final existing = await docRef.get();
+    double rating = (existing.data()?['rating'] as num?)?.toDouble() ?? 5;
+    final TextEditingController controller = TextEditingController(
+      text: existing.data()?['comment'] as String? ?? '',
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Đánh giá phòng'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 4,
+                runSpacing: 4,
+                children: List.generate(5, (index) {
+                  final starValue = index + 1;
+                  return IconButton(
+                    constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(
+                      starValue <= rating ? Icons.star : Icons.star_border,
+                      color: Colors.amber,
+                      size: 24,
+                    ),
+                    onPressed: () {
+                      rating = starValue.toDouble();
+                      (ctx as Element).markNeedsBuild();
+                    },
+                  );
+                }),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: controller,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Nhận xét của bạn',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Hủy'),
+            ),
+            TextButton(
+              onPressed: () async {
+                try {
+                  await docRef.set({
+                    'rating': rating.toInt(),
+                    'comment': controller.text.trim(),
+                    'userId': user.uid,
+                    'userEmail': user.email,
+                    'roomId': widget.room.id,
+                    'createdAt': FieldValue.serverTimestamp(),
+                    'updatedAt': FieldValue.serverTimestamp(),
+                  }, SetOptions(merge: true));
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Đã gửi đánh giá của bạn.')),
+                    );
+                  }
+                  await _sendReviewCreatedNotification(
+                    rating: rating.toInt(),
+                    comment: controller.text.trim(),
+                  );
+                  // ignore: use_build_context_synchronously
+                  Navigator.of(ctx).pop();
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Lỗi khi lưu đánh giá: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              child: const Text('Gửi'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _sendReviewCreatedNotification({
+    required int rating,
+    required String comment,
+  }) async {
+    // Gửi thông báo cho chủ phòng khi có đánh giá mới
+    var ownerId = widget.room.ownerId ?? '';
+    if (ownerId.isEmpty || ownerId == '—') {
+      try {
+        final roomSnap =
+            await FirebaseFirestore.instance.collection('rooms').doc(widget.room.id).get();
+        final data = roomSnap.data();
+        ownerId = data?['ownerId'] as String? ?? data?['userId'] as String? ?? '';
+      } catch (_) {
+        // bỏ qua nếu không lấy được owner
+      }
+    }
+    if (ownerId.isEmpty || ownerId == '—') return;
+
+    final snippet = comment.isNotEmpty
+        ? (comment.length > 80 ? '${comment.substring(0, 80)}…' : comment)
+        : 'Đánh giá ${rating} sao';
+
+    await FirebaseFirestore.instance.collection('notifications').add({
+      'userId': ownerId,
+      'type': 'review_new',
+      'title': 'Phòng của bạn có đánh giá mới',
+      'body': 'Tin "${widget.room.title}" nhận ${rating}★: $snippet',
+      'roomId': widget.room.id,
+      'roomTitle': widget.room.title,
+      'rating': rating,
+      'comment': comment,
+      'isRead': false,
+      'createdAt': FieldValue.serverTimestamp(),
+      'data': {
+        'roomId': widget.room.id,
+        'roomTitle': widget.room.title,
+        'rating': rating,
+        'comment': comment,
+      },
+    });
+  }
+
+  Widget _buildReviewsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Đánh giá',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+            TextButton.icon(
+              onPressed: _openReviewDialog,
+              icon: const Icon(Icons.rate_review_outlined, size: 18),
+              label: const Text('Viết đánh giá'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('rooms')
+              .doc(widget.room.id)
+              .collection('reviews')
+              .orderBy('createdAt', descending: true)
+              .snapshots(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(8.0),
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              );
+            }
+            final docs = snapshot.data?.docs ?? [];
+            if (docs.isEmpty) {
+              return const Text(
+                  'Chưa có đánh giá nào. Hãy là người đầu tiên đánh giá phòng này!');
+            }
+            return Column(
+              children: docs.take(5).map((doc) {
+                final data = doc.data();
+                final rating = (data['rating'] as num?)?.toInt() ?? 0;
+                final comment = data['comment'] as String? ?? '';
+                final email = data['userEmail'] as String? ?? '';
+                final createdAt = data['createdAt'] as Timestamp?;
+                final dateText = createdAt != null
+                    ? '${createdAt.toDate().day}/${createdAt.toDate().month}/${createdAt.toDate().year}'
+                    : '';
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.person_outline,
+                            size: 18,
+                            color: Colors.grey.shade700,
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              email.isNotEmpty ? email : 'Người dùng ẩn danh',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Row(
+                            children: List.generate(5, (index) {
+                              return Icon(
+                                index < rating
+                                    ? Icons.star
+                                    : Icons.star_border,
+                                size: 16,
+                                color: Colors.amber,
+                              );
+                            }),
+                          ),
+                        ],
+                      ),
+                      if (comment.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(comment),
+                      ],
+                      if (dateText.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          dateText,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+              }).toList(),
+            );
+          },
+        ),
+      ],
+    );
   }
 
   Future<void> _loadFavoriteStatus() async {
@@ -240,7 +562,9 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
-                              const SizedBox(height: 16),
+                              const SizedBox(height: 8),
+                              _buildRatingSummary(),
+                              const SizedBox(height: 8),
                               Row(
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
@@ -370,6 +694,9 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
                                   ),
                                 ],
                               ),
+                              const SizedBox(height: 24),
+                              // Đánh giá
+                              _buildReviewsSection(),
                               const SizedBox(height: 24),
                               // Mô tả
                               Text(
@@ -544,6 +871,14 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
                   _openChat();
                 },
               ),
+              _ActionTile(
+                icon: Icons.flag_outlined,
+                label: 'Báo cáo tin',
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _showReportDialog();
+                },
+              ),
               const SizedBox(height: 8),
             ],
           ),
@@ -656,6 +991,134 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
           ),
         );
       }
+    }
+  }
+
+  /// Báo cáo tin đăng
+  Future<void> _showReportDialog() async {
+    final room = widget.room;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Vui lòng đăng nhập để báo cáo tin'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    final reasons = <String>[
+      'Tin giả / lừa đảo',
+      'Thông tin sai sự thật',
+      'Ảnh không đúng thực tế',
+      'Giá không đúng',
+      'Khác...',
+    ];
+
+    String selectedReason = reasons.first;
+    final contentController = TextEditingController();
+
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('Báo cáo tin đăng'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Lý do báo cáo'),
+                  const SizedBox(height: 8),
+                  StatefulBuilder(
+                    builder: (context, setState) {
+                      return DropdownButtonFormField<String>(
+                        value: selectedReason,
+                        items: reasons
+                            .map((r) => DropdownMenuItem(
+                                  value: r,
+                                  child: Text(r),
+                                ))
+                            .toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setState(() {
+                            selectedReason = value;
+                          });
+                        },
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('Mô tả chi tiết (tuỳ chọn)'),
+                  const SizedBox(height: 4),
+                  TextField(
+                    controller: contentController,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      hintText: 'Mô tả rõ vấn đề bạn gặp phải...',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Hủy'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Gửi báo cáo'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (confirmed != true) {
+        return;
+      }
+
+      final firestore = FirebaseFirestore.instance;
+      await firestore.collection('reports').add({
+        'roomId': room.id,
+        'roomTitle': room.title,
+        'roomThumbnailUrl': room.thumbnailUrl,
+        'roomPriceMillion': room.priceMillion,
+        'roomArea': room.area,
+        'roomIsShared': room.isShared,
+        'roomType': room.roomType,
+        'roomImages': _getImageList(room),
+        'roomOwnerId': room.ownerId,
+        'roomOwnerName': room.ownerName,
+        'reporterId': user.uid,
+        'reporterEmail': user.email,
+        'type': selectedReason,
+        'content': contentController.text.trim(),
+        'status': 'pending',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Đã gửi báo cáo. Cảm ơn bạn đã phản hồi!'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Lỗi khi gửi báo cáo: $e'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
     }
   }
 
@@ -1030,44 +1493,10 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
 
     if (imageList.length == 1) {
       // Chỉ có 1 ảnh, hiển thị bình thường
-      return Image.network(
-        imageList[0],
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) => Container(
-          color: Colors.grey.shade300,
-          child: const Center(
-            child: Icon(Icons.broken_image, size: 48, color: Colors.grey),
-          ),
-        ),
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          return Container(
-            color: Colors.grey.shade200,
-            child: Center(
-              child: CircularProgressIndicator(
-                value: loadingProgress.expectedTotalBytes != null
-                    ? loadingProgress.cumulativeBytesLoaded /
-                        loadingProgress.expectedTotalBytes!
-                    : null,
-              ),
-            ),
-          );
-        },
-      );
-    }
-
-    // Nhiều ảnh, dùng PageView
-    return PageView.builder(
-      controller: _pageController,
-      itemCount: imageList.length,
-      onPageChanged: (index) {
-        setState(() {
-          _currentImageIndex = index;
-        });
-      },
-      itemBuilder: (context, index) {
-        return Image.network(
-          imageList[index],
+      return GestureDetector(
+        onTap: () => _openFullImage(imageList, 0),
+        child: Image.network(
+          imageList[0],
           fit: BoxFit.cover,
           errorBuilder: (context, error, stackTrace) => Container(
             color: Colors.grey.shade300,
@@ -1089,6 +1518,95 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
               ),
             );
           },
+        ),
+      );
+    }
+
+    // Nhiều ảnh, dùng PageView
+    return PageView.builder(
+      controller: _pageController,
+      itemCount: imageList.length,
+      onPageChanged: (index) {
+        setState(() {
+          _currentImageIndex = index;
+        });
+      },
+      itemBuilder: (context, index) {
+        return GestureDetector(
+          onTap: () => _openFullImage(imageList, index),
+          child: Image.network(
+            imageList[index],
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) => Container(
+              color: Colors.grey.shade300,
+              child: const Center(
+                child: Icon(Icons.broken_image, size: 48, color: Colors.grey),
+              ),
+            ),
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return Container(
+                color: Colors.grey.shade200,
+                child: Center(
+                  child: CircularProgressIndicator(
+                    value: loadingProgress.expectedTotalBytes != null
+                        ? loadingProgress.cumulativeBytesLoaded /
+                            loadingProgress.expectedTotalBytes!
+                        : null,
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  /// Xem ảnh toàn màn, hỗ trợ zoom.
+  void _openFullImage(List<String> images, int startIndex) {
+    if (images.isEmpty) return;
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        final controller = PageController(initialPage: startIndex);
+        return Dialog(
+          insetPadding: EdgeInsets.zero,
+          backgroundColor: Colors.black,
+          child: Stack(
+            children: [
+              PageView.builder(
+                controller: controller,
+                itemCount: images.length,
+                itemBuilder: (context, index) {
+                  final url = images[index];
+                  return InteractiveViewer(
+                    minScale: 1,
+                    maxScale: 4,
+                    child: Center(
+                      child: Image.network(
+                        url,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) => const Icon(
+                          Icons.broken_image,
+                          color: Colors.white70,
+                          size: 64,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              Positioned(
+                top: 32,
+                right: 16,
+                child: IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ),
+            ],
+          ),
         );
       },
     );

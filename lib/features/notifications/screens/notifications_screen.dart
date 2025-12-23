@@ -206,7 +206,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           }
 
           final notifications = snapshot.data ?? [];
-          print('📱 NotificationsScreen: Displaying ${notifications.length} notifications');
+          print('📱 NotificationsScreen: Displaying ${notifications.length} notifications for UID=${user.uid}');
 
           if (notifications.isEmpty) {
             return Center(
@@ -306,6 +306,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       case NotificationType.roomApproved:
       case NotificationType.roomRejected:
       case NotificationType.roomPriceChanged:
+      case NotificationType.roomHidden:
+      case NotificationType.reviewNew:
+      case NotificationType.reviewRemoved:
       case NotificationType.roomMatched:
         // Navigate đến room detail nếu có roomId
         if (notification.data != null &&

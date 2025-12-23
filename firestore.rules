@@ -21,105 +21,171 @@ function notBanned() {
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Admin full access
+    // Admin: full access (cộng OR với các rule bên dưới)
     match /{document=**} {
       allow read, write: if isAdmin();
     }
 
-    // USERS: không check banned để tránh lỗi presence/FCM
+    // REPORTS: báo cáo tin từ user
+    match /reports/{reportId} {
+      // User đăng nhập có thể gửi báo cáo
+      allow create: if request.auth != null;
+
+      // Chỉ admin được xem / sửa / xóa
+      allow read, update, delete: if isAdmin();
+    }
+
+    // USERS
     match /users/{userId} {
+      // Ai cũng đọc được thông tin cơ bản
       allow read: if true;
+
+      // User chỉ được sửa hồ sơ của chính mình
       allow write: if request.auth != null && request.auth.uid == userId;
-      
+
       // FCM TOKENS: users/{userId}/fcmTokens/{tokenId}
       match /fcmTokens/{tokenId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
+
+      // BLOCKED USERS: users/{userId}/blockedUsers/{blockedUserId}
+      // Mỗi user chỉ được xem / sửa danh sách chặn của chính mình
+      match /blockedUsers/{blockedUserId} {
+        allow read, write, delete: if request.auth != null && request.auth.uid == userId;
+      }
     }
 
-    // ROOMS (TIN ĐĂNG PHÒNG TRỌ): rooms/{roomId}
+    // ROOMS (TIN ĐĂNG PHÒNG TRỌ)
     match /rooms/{roomId} {
-      // Ai cũng đọc được tin phòng trọ
+      // Ai cũng đọc được tin phòng
       allow read: if true;
 
-      // Tạo mới: User đã đăng nhập
+      // Tạo tin: phải đăng nhập
       allow create: if request.auth != null;
-      
-      // Cập nhật/Xóa: Chỉ ownerId (người đăng tin) mới được sửa/xóa
+
+      // Sửa/Xóa: chỉ owner
       allow update, delete: if request.auth != null
-                           && resource.data.ownerId == request.auth.uid;
+                            && resource.data.ownerId == request.auth.uid;
+
+      // ĐÁNH GIÁ PHÒNG: rooms/{roomId}/reviews/{userId}
+      match /reviews/{userId} {
+        // Ai cũng xem được đánh giá
+        allow read, list: if true;
+
+        // Chỉ user đăng nhập mới được tạo/sửa/xóa review của chính mình
+        // Đảm bảo mỗi user chỉ có 1 review/room (docId = userId)
+        allow create, update: if request.auth != null
+                              && request.auth.uid == userId
+                              && request.resource.data.userId == request.auth.uid
+                              && request.resource.data.roomId == roomId
+                              && request.resource.data.rating is int
+                              && request.resource.data.rating >= 1
+                              && request.resource.data.rating <= 5;
+
+        allow delete: if request.auth != null
+                      && request.auth.uid == userId;
+      }
     }
 
-    // FAVORITES: favorites/{favoriteId}
+    // FAVORITES
     match /favorites/{favoriteId} {
       allow read, list: if request.auth != null
-                  && request.auth.uid == resource.data.userId;
+                        && request.auth.uid == resource.data.userId;
+
       allow create: if request.auth != null
                     && request.auth.uid == request.resource.data.userId;
+
       allow update, delete: if request.auth != null
-                             && request.auth.uid == resource.data.userId;
+                            && request.auth.uid == resource.data.userId;
     }
 
-    // LỊCH SỬ XEM: viewHistory/{historyId}
+    // LỊCH SỬ XEM
     match /viewHistory/{historyId} {
       allow read, list: if request.auth != null
-                  && resource.data.userId == request.auth.uid;
+                        && resource.data.userId == request.auth.uid;
+
       allow create: if request.auth != null
                     && request.auth.uid == request.resource.data.userId;
+
       allow update, delete: if request.auth != null
-                             && request.auth.uid == resource.data.userId;
+                            && request.auth.uid == resource.data.userId;
     }
 
-    // THÔNG BÁO: notifications/{notiId}
+    // THÔNG BÁO
     match /notifications/{notiId} {
       allow read, list: if request.auth != null
-                 && (
-                      resource.data.userId == request.auth.uid
-                      || resource.data.data.userId == request.auth.uid
-                    );
+                        && (
+                          resource.data.userId == request.auth.uid
+                          || resource.data.data.userId == request.auth.uid
+                        );
+
       allow create: if request.auth != null
                     && request.resource.data.type is string
                     && (
-                        request.resource.data.userId is string
-                        || request.resource.data.data.userId is string
-                       )
-                    && (request.resource.data.type == 'new_message'
-                         || request.resource.data.type == 'room_approved'
-                         || request.resource.data.type == 'room_rejected'
-                         || request.resource.data.type == 'room_price_changed');
+                      request.resource.data.userId is string
+                      || request.resource.data.data.userId is string
+                    )
+                    && (
+                      request.resource.data.type == 'new_message'
+                      || request.resource.data.type == 'room_approved'
+                      || request.resource.data.type == 'room_rejected'
+                      || request.resource.data.type == 'room_hidden'
+                      || request.resource.data.type == 'room_price_changed'
+                      || request.resource.data.type == 'review_new'
+                      || request.resource.data.type == 'review_removed'
+                    );
+
       allow update, delete: if request.auth != null
-                             && (
-                                  resource.data.userId == request.auth.uid
-                                  || resource.data.data.userId == request.auth.uid
-                                );
+                            && (
+                              resource.data.userId == request.auth.uid
+                              || resource.data.data.userId == request.auth.uid
+                            );
     }
 
-    // CONVERSATIONS: conversations/{convId}
+    // CONVERSATIONS + MESSAGES
     match /conversations/{convId} {
+      // Chỉ participant mới đọc/list
       allow read, list: if request.auth != null
-                  && resource.data.participantIds.hasAny([request.auth.uid]);
+                        && resource.data.participantIds.hasAny([request.auth.uid]);
+
+      // Tạo: user phải là participant
       allow create: if request.auth != null
                     && request.resource.data.participantIds.hasAny([request.auth.uid]);
+
+      // Cập nhật: không được đổi danh sách participantIds
       allow update: if request.auth != null
                     && resource.data.participantIds.hasAny([request.auth.uid])
                     && request.resource.data.participantIds == resource.data.participantIds;
+
+      // Xóa: participant được xóa cuộc trò chuyện của mình
       allow delete: if request.auth != null
                     && resource.data.participantIds.hasAny([request.auth.uid]);
-      
+
       // MESSAGES: conversations/{convId}/messages/{msgId}
       match /messages/{msgId} {
         allow read, list: if request.auth != null
-                    && get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds.hasAny([request.auth.uid]);
+                          && get(/databases/$(database)/documents/conversations/$(convId))
+                             .data.participantIds.hasAny([request.auth.uid]);
+
         allow create: if request.auth != null
                       && request.resource.data.senderId == request.auth.uid
-                      && get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds.hasAny([request.auth.uid]);
+                      && get(/databases/$(database)/documents/conversations/$(convId))
+                         .data.participantIds.hasAny([request.auth.uid])
+                      && get(/databases/$(database)/documents/conversations/$(convId))
+                         .data.isBlocked != true;
+
         allow update: if request.auth != null
-                      && get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds.hasAny([request.auth.uid])
+                      && get(/databases/$(database)/documents/conversations/$(convId))
+                         .data.participantIds.hasAny([request.auth.uid])
                       && (
-                          resource.data.senderId == request.auth.uid
-                          || (resource.data.senderId != request.auth.uid
-                              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead', 'readAt']))
+                        resource.data.senderId == request.auth.uid
+                        || (
+                          resource.data.senderId != request.auth.uid
+                          && request.resource.data.diff(resource.data)
+                             .affectedKeys().hasOnly(['isRead', 'readAt'])
+                        )
                       );
+
         allow delete: if request.auth != null
                       && resource.data.senderId == request.auth.uid;
       }

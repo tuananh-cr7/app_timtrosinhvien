@@ -62,6 +62,9 @@ enum NotificationType {
   roomRejected, // Tin đăng bị từ chối
   roomPriceChanged, // Phòng yêu thích thay đổi giá
   newMessage, // Tin nhắn mới
+  roomHidden, // Tin bị ẩn bởi admin
+  reviewNew, // Có đánh giá mới cho phòng
+  reviewRemoved, // Đánh giá bị gỡ
   roomMatched, // Tin mới phù hợp với tìm kiếm
   system, // Thông báo hệ thống
 
@@ -77,6 +80,12 @@ enum NotificationType {
         return 'room_price_changed';
       case NotificationType.newMessage:
         return 'new_message';
+      case NotificationType.roomHidden:
+        return 'room_hidden';
+      case NotificationType.reviewNew:
+        return 'review_new';
+      case NotificationType.reviewRemoved:
+        return 'review_removed';
       case NotificationType.roomMatched:
         return 'room_matched';
       case NotificationType.system:
@@ -96,6 +105,12 @@ enum NotificationType {
         return NotificationType.roomPriceChanged;
       case 'new_message':
         return NotificationType.newMessage;
+      case 'room_hidden':
+        return NotificationType.roomHidden;
+      case 'review_new':
+        return NotificationType.reviewNew;
+      case 'review_removed':
+        return NotificationType.reviewRemoved;
       case 'room_matched':
         return NotificationType.roomMatched;
       case 'system':
@@ -115,6 +130,12 @@ enum NotificationType {
         return 'Giá thay đổi';
       case NotificationType.newMessage:
         return 'Tin nhắn mới';
+      case NotificationType.roomHidden:
+        return 'Tin bị ẩn';
+      case NotificationType.reviewNew:
+        return 'Đánh giá mới';
+      case NotificationType.reviewRemoved:
+        return 'Đánh giá bị gỡ';
       case NotificationType.roomMatched:
         return 'Tin mới phù hợp';
       case NotificationType.system:
@@ -134,6 +155,12 @@ enum NotificationType {
         return Icons.trending_down;
       case NotificationType.newMessage:
         return Icons.chat_bubble;
+      case NotificationType.roomHidden:
+        return Icons.visibility_off;
+      case NotificationType.reviewNew:
+        return Icons.reviews;
+      case NotificationType.reviewRemoved:
+        return Icons.delete_outline;
       case NotificationType.roomMatched:
         return Icons.home;
       case NotificationType.system:

@@ -149,19 +149,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Text(
-                          'Yêu thích',
-                          textAlign: TextAlign.center,
-                          style: theme.textTheme.headlineSmall
-                              ?.copyWith(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          countText,
-                          textAlign: TextAlign.center,
-                          style: theme.textTheme.bodyMedium
-                              ?.copyWith(color: Colors.grey.shade600),
-                        ),
+                        _Header(title: 'Yêu thích', subtitle: countText),
                         const SizedBox(height: 48),
                         Icon(Icons.favorite_border,
                             size: 64, color: Colors.grey.shade400),
@@ -181,24 +169,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                     // Header với "Yêu thích" và số phòng đã lưu (căn giữa)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Text(
-                            'Yêu thích',
-                            textAlign: TextAlign.center,
-                            style: theme.textTheme.headlineSmall
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            countText,
-                            textAlign: TextAlign.center,
-                            style: theme.textTheme.bodyMedium
-                                ?.copyWith(color: Colors.grey.shade600),
-                          ),
-                        ],
-                      ),
+                      child: _Header(title: 'Yêu thích', subtitle: countText),
                     ),
                     // Danh sách phòng
                     ...rooms.map((room) => Padding(
@@ -248,6 +219,50 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     }
     print('📊 Hoàn tất: Load được ${rooms.length}/${roomIds.length} phòng');
     return rooms;
+  }
+}
+
+class _Header extends StatelessWidget {
+  const _Header({required this.title, required this.subtitle});
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.arrow_back_ios_new_rounded),
+              onPressed: () {
+                Navigator.of(context).maybePop();
+              },
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                title,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.headlineSmall
+                    ?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(width: 48), // balance leading icon space
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          subtitle,
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodyMedium
+              ?.copyWith(color: Colors.grey.shade600),
+        ),
+      ],
+    );
   }
 }
 

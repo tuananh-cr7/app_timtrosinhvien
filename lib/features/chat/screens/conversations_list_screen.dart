@@ -140,15 +140,19 @@ class _ConversationsListScreenState extends State<ConversationsListScreen> {
                 return _ConversationTile(
                   conversation: conversation,
                   currentUserId: user.uid,
-                  onTap: (displayName, avatar) {
+                  onTap: (displayName, avatar, otherUserId) {
+                    final finalOtherUserId = otherUserId?.isNotEmpty == true
+                        ? otherUserId!
+                        : (conversation.otherUserId ?? '');
                     // Mở conversation detail screen
                     // Stream sẽ tự động cập nhật khi unreadCount thay đổi trong Firestore
                     Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => ConversationDetailScreen(
                           conversationId: conversation.id,
-                          otherUserId: conversation.otherUserId ?? '',
-                          otherUserName: displayName ?? conversation.otherUserName ?? 'Người dùng',
+                          otherUserId: finalOtherUserId,
+                          otherUserName:
+                              displayName ?? conversation.otherUserName ?? 'Người dùng',
                           otherUserAvatar: avatar ?? conversation.otherUserAvatar,
                           roomId: conversation.roomId,
                           roomTitle: conversation.roomTitle,
@@ -175,7 +179,7 @@ class _ConversationTile extends StatefulWidget {
 
   final Conversation conversation;
   final String currentUserId;
-  final void Function(String?, String?) onTap;
+  final void Function(String?, String?, String?) onTap;
 
   @override
   State<_ConversationTile> createState() => _ConversationTileState();
@@ -184,6 +188,7 @@ class _ConversationTile extends StatefulWidget {
 class _ConversationTileState extends State<_ConversationTile> {
   String? _displayName;
   String? _avatar;
+  String? _resolvedOtherUserId;
 
   @override
   void initState() {
@@ -192,22 +197,53 @@ class _ConversationTileState extends State<_ConversationTile> {
   }
 
   Future<void> _loadUserInfo() async {
-    final otherUserId = widget.conversation.otherUserId;
+    // Xác định ID của người còn lại trong cuộc trò chuyện
+    String? otherUserId = widget.conversation.otherUserId;
+    bool forceFetch = false;
+
+    // Nếu otherUserId đang trùng với currentUserId (do cuộc trò chuyện được tạo
+    // từ phía bên kia) thì lấy ID còn lại trong participantIds
+    if (otherUserId == null ||
+        otherUserId.isEmpty ||
+        otherUserId == widget.currentUserId) {
+      forceFetch = true; // bắt buộc fetch lại tên/avatar của người còn lại
+      if (widget.conversation.participantIds.length >= 2) {
+        otherUserId = widget.conversation.participantIds
+            .firstWhere(
+              (id) => id != widget.currentUserId,
+              orElse: () => otherUserId ?? '',
+            );
+      }
+    }
     if (otherUserId == null || otherUserId.isEmpty) {
       setState(() {
         _displayName = widget.conversation.otherUserName ?? 'Người dùng';
         _avatar = widget.conversation.otherUserAvatar;
+        _resolvedOtherUserId = null;
       });
       return;
     }
+    _resolvedOtherUserId = otherUserId;
 
-    // Nếu đã có tên và không phải "Người dùng", dùng luôn
-    if (widget.conversation.otherUserName != null &&
-        widget.conversation.otherUserName!.isNotEmpty &&
-        widget.conversation.otherUserName != 'Người dùng') {
+    // Nếu đã có tên hợp lệ và không phải tên của chính mình, dùng luôn
+    // trừ khi forceFetch (tức otherUserId ban đầu trùng currentUser)
+    final existingName = widget.conversation.otherUserName;
+    final currentUserName = FirebaseAuth.instance.currentUser?.displayName ??
+        FirebaseAuth.instance.currentUser?.email?.split('@').first ??
+        '';
+    final existingLooksLikeSelf = existingName != null &&
+        existingName.isNotEmpty &&
+        currentUserName.isNotEmpty &&
+        existingName.toLowerCase() == currentUserName.toLowerCase();
+    if (!forceFetch &&
+        existingName != null &&
+        existingName.isNotEmpty &&
+        existingName != 'Người dùng' &&
+        !existingLooksLikeSelf) {
       setState(() {
-        _displayName = widget.conversation.otherUserName;
+        _displayName = existingName;
         _avatar = widget.conversation.otherUserAvatar;
+        _resolvedOtherUserId = otherUserId;
       });
       return;
     }
@@ -239,22 +275,36 @@ class _ConversationTileState extends State<_ConversationTile> {
         print('  - conversation.otherUserAvatar: ${widget.conversation.otherUserAvatar}');
         
         setState(() {
-          _displayName = name ?? widget.conversation.otherUserName ?? 'Người dùng';
+          final currentUserName = FirebaseAuth.instance.currentUser?.displayName ??
+              FirebaseAuth.instance.currentUser?.email?.split('@').first ??
+              '';
+          final sanitizedName = (name != null &&
+                  currentUserName.isNotEmpty &&
+                  name.toLowerCase() == currentUserName.toLowerCase())
+              ? 'Người dùng'
+              : name;
+          _displayName = sanitizedName ?? widget.conversation.otherUserName ?? 'Người dùng';
           // Ưu tiên avatar mới fetch được
           _avatar = (avatar != null && avatar.isNotEmpty) 
               ? avatar 
               : widget.conversation.otherUserAvatar;
+          _resolvedOtherUserId = otherUserId;
         });
         
         print('  - _avatar sau setState: $_avatar');
         
-        // Cập nhật conversation với tên và avatar mới nếu cần
+        // Cập nhật conversation với tên, avatar & otherUserId chuẩn nếu cần
         if (name != null && name.isNotEmpty && name != 'Người dùng') {
           final updateData = <String, dynamic>{
             'otherUserName': name,
           };
           if (avatar != null && avatar.isNotEmpty) {
             updateData['otherUserAvatar'] = avatar;
+          }
+          // Nếu otherUserId trong document đang sai (trùng currentUserId)
+          // thì sửa lại thành ID của người còn lại
+          if (widget.conversation.otherUserId == widget.currentUserId) {
+            updateData['otherUserId'] = otherUserId;
           }
           
           await FirebaseFirestore.instance
@@ -268,6 +318,7 @@ class _ConversationTileState extends State<_ConversationTile> {
         setState(() {
           _displayName = widget.conversation.otherUserName ?? 'Người dùng';
           _avatar = widget.conversation.otherUserAvatar;
+          _resolvedOtherUserId = otherUserId;
         });
       }
     } catch (e) {
@@ -276,6 +327,7 @@ class _ConversationTileState extends State<_ConversationTile> {
         setState(() {
           _displayName = widget.conversation.otherUserName ?? 'Người dùng';
           _avatar = widget.conversation.otherUserAvatar;
+          _resolvedOtherUserId = otherUserId;
         });
       }
     }
@@ -302,6 +354,25 @@ class _ConversationTileState extends State<_ConversationTile> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isUnread = widget.conversation.unreadCount > 0;
+    final currentUserName = FirebaseAuth.instance.currentUser?.displayName ??
+        FirebaseAuth.instance.currentUser?.email?.split('@').first ??
+        '';
+    // Ưu tiên otherUserId đã resolve; nếu trùng currentUser hoặc trống, tìm trong participantIds
+    String? candidateOtherId = _resolvedOtherUserId ?? widget.conversation.otherUserId;
+    if (candidateOtherId == null ||
+        candidateOtherId.isEmpty ||
+        candidateOtherId == widget.currentUserId) {
+      candidateOtherId = widget.conversation.participantIds
+          .firstWhere((id) => id != widget.currentUserId, orElse: () => '');
+    }
+    final isSelf = candidateOtherId == widget.currentUserId || candidateOtherId.isEmpty;
+    String finalName =
+        isSelf ? 'Người dùng' : (_displayName ?? widget.conversation.otherUserName ?? 'Người dùng');
+    if (finalName.isNotEmpty &&
+        currentUserName.isNotEmpty &&
+        finalName.toLowerCase() == currentUserName.toLowerCase()) {
+      finalName = 'Người dùng';
+    }
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -323,7 +394,7 @@ class _ConversationTileState extends State<_ConversationTile> {
           },
           child: _avatar == null || _avatar!.isEmpty
               ? Text(
-                  (_displayName ?? widget.conversation.otherUserName ?? 'U')[0].toUpperCase(),
+                  (finalName.isNotEmpty ? finalName[0] : 'U').toUpperCase(),
                   style: const TextStyle(fontSize: 20),
                 )
               : null,
@@ -332,7 +403,7 @@ class _ConversationTileState extends State<_ConversationTile> {
           children: [
             Expanded(
               child: Text(
-                _displayName ?? widget.conversation.otherUserName ?? 'Người dùng',
+                finalName,
                 style: TextStyle(
                   fontWeight: isUnread ? FontWeight.bold : FontWeight.normal,
                 ),
@@ -369,7 +440,7 @@ class _ConversationTileState extends State<_ConversationTile> {
             ),
           ],
         ),
-        onTap: () => widget.onTap(_displayName, _avatar),
+        onTap: () => widget.onTap(_displayName, _avatar, candidateOtherId),
       ),
     );
   }

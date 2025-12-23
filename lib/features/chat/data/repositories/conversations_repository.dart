@@ -796,12 +796,20 @@ class ConversationsRepository {
   }
 
   /// Block/Unblock user.
-  Future<ApiResult<void>> toggleBlockUser(String userId, bool isBlocked) async {
+  /// [userId]: ID của người bị chặn.
+  /// [conversationId]: (tùy chọn) ID cuộc trò chuyện để đánh dấu isBlocked cho cả 2 bên.
+  Future<ApiResult<void>> toggleBlockUser(
+    String userId,
+    bool isBlocked, {
+    String? conversationId,
+  }) async {
     try {
       final user = _auth.currentUser;
       if (user == null) {
         return ApiError('Chưa đăng nhập');
       }
+
+      final batch = _firestore.batch();
 
       final blockDoc = _firestore
           .collection('users')
@@ -810,12 +818,39 @@ class ConversationsRepository {
           .doc(userId);
 
       if (isBlocked) {
-        await blockDoc.set({
+        batch.set(blockDoc, {
           'blockedAt': FieldValue.serverTimestamp(),
         });
       } else {
-        await blockDoc.delete();
+        batch.delete(blockDoc);
       }
+
+      // Nếu có conversationId, đánh dấu isBlocked và blockedBy cho cuộc trò chuyện đó
+      if (conversationId != null && conversationId.isNotEmpty) {
+        final convRef =
+            _firestore.collection(_conversationsCollection).doc(conversationId);
+        if (isBlocked) {
+          batch.set(
+            convRef,
+            {
+              'isBlocked': true,
+              'blockedBy': user.uid,
+            },
+            SetOptions(merge: true),
+          );
+        } else {
+          batch.set(
+            convRef,
+            {
+              'isBlocked': false,
+              'blockedBy': FieldValue.delete(),
+            },
+            SetOptions(merge: true),
+          );
+        }
+      }
+
+      await batch.commit();
 
       return ApiSuccess(null);
     } catch (e) {
@@ -823,7 +858,7 @@ class ConversationsRepository {
     }
   }
 
-  /// Kiểm tra user có bị block không.
+  /// Kiểm tra user có bị block không (1 chiều: mình chặn người kia).
   Future<bool> isUserBlocked(String userId) async {
     try {
       final user = _auth.currentUser;
@@ -839,6 +874,44 @@ class ConversationsRepository {
       return blockDoc.exists;
     } catch (e) {
       return false;
+    }
+  }
+
+  /// Kiểm tra block 2 chiều: A chặn B hoặc B chặn A.
+  /// Trả về: (isBlocked, reason) - reason = 'you_blocked' hoặc 'they_blocked'
+  Future<({bool isBlocked, String? reason})> checkBlockStatus(String otherUserId) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return (isBlocked: false, reason: null);
+
+      // Check mình chặn người kia
+      final myBlockDoc = await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .collection('blockedUsers')
+          .doc(otherUserId)
+          .get();
+
+      if (myBlockDoc.exists) {
+        return (isBlocked: true, reason: 'you_blocked');
+      }
+
+      // Check người kia chặn mình
+      final theirBlockDoc = await _firestore
+          .collection('users')
+          .doc(otherUserId)
+          .collection('blockedUsers')
+          .doc(user.uid)
+          .get();
+
+      if (theirBlockDoc.exists) {
+        return (isBlocked: true, reason: 'they_blocked');
+      }
+
+      return (isBlocked: false, reason: null);
+    } catch (e) {
+      print('⚠️ Lỗi check block status: $e');
+      return (isBlocked: false, reason: null);
     }
   }
 
@@ -867,6 +940,26 @@ class ConversationsRepository {
       return ApiSuccess(null);
     } catch (e) {
       return ApiError('Không thể thêm admin: ${e.toString()}', e);
+    }
+  }
+
+  /// Lấy ID của participant còn lại trong một conversation.
+  Future<String?> getOtherParticipantId(String conversationId) async {
+    final user = _auth.currentUser;
+    if (user == null) return null;
+
+    try {
+      final doc = await _firestore.collection(_conversationsCollection).doc(conversationId).get();
+      if (!doc.exists) return null;
+
+      final data = doc.data();
+      final participants = List<String>.from(data?['participantIds'] ?? []);
+      for (final id in participants) {
+        if (id != user.uid) return id;
+      }
+      return null;
+    } catch (e) {
+      return null;
     }
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -9,6 +10,9 @@ import '../data/repositories/conversations_repository.dart';
 import '../models/conversation.dart';
 import '../../../core/models/api_result.dart';
 import '../../../core/widgets/loading_error_widget.dart';
+import '../../home/data/repositories/rooms_repository.dart';
+import '../../home/room_detail_screen.dart';
+import '../../home/models/room.dart';
 
 /// Màn hình chat chi tiết.
 class ConversationDetailScreen extends StatefulWidget {
@@ -35,6 +39,7 @@ class ConversationDetailScreen extends StatefulWidget {
 
 class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   final _repository = ConversationsRepository();
+  final _roomsRepository = RoomsRepository();
   final _auth = FirebaseAuth.instance;
   final _firestore = FirebaseFirestore.instance;
   final _messageController = TextEditingController();
@@ -42,6 +47,13 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   final _imagePicker = ImagePicker();
   final List<File> _selectedImages = [];
   bool _isSending = false;
+  bool _isMuted = false;
+  bool _isBlocked = false;
+  String? _blockReason; // 'you_blocked' hoặc 'they_blocked'
+  bool _isUnblocking = false;
+  StreamSubscription<DocumentSnapshot>? _conversationSub;
+  String? _resolvedOtherUserId;
+  String? _blockedByUid;
   
   String? _displayName;
   String? _displayAvatar;
@@ -67,6 +79,90 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     
     // Listen for new messages và tạo notification nếu cần
     _setupMessageListener();
+
+    // Load trạng thái mute hiện tại của cuộc trò chuyện
+    _loadConversationMuteStatus();
+
+    // Load trạng thái block (2 chiều)
+    _loadBlockStatus();
+
+    // Listen isBlocked trên conversation (để cập nhật realtime)
+    _listenConversationBlockFlag();
+
+    // Resolve other user id sớm để tránh lệch trạng thái
+    _resolveOtherUserId();
+  }
+
+  Future<void> _loadBlockStatus() async {
+    try {
+      // Ưu tiên đọc blockedBy từ conversation doc (ép lấy từ server để tránh cache cũ)
+      final convDoc = await _firestore
+          .collection('conversations')
+          .doc(widget.conversationId)
+          .get(const GetOptions(source: Source.server));
+      final convData = convDoc.data();
+      final convBlocked = (convData?['isBlocked'] ?? false) as bool;
+      final convBlockedBy = convData?['blockedBy'] as String?;
+
+      String? otherId = widget.otherUserId;
+      if (otherId == null || otherId.isEmpty) {
+        otherId = await _repository.getOtherParticipantId(widget.conversationId);
+      }
+      
+      if (convBlocked && convBlockedBy != null && _auth.currentUser != null) {
+        // Nếu conversation có blockedBy, dùng luôn (ổn định hơn)
+        final currentUid = _auth.currentUser!.uid;
+        if (mounted) {
+          setState(() {
+            _isBlocked = true;
+            _blockedByUid = convBlockedBy;
+            _blockReason =
+                convBlockedBy == currentUid ? 'you_blocked' : 'they_blocked';
+          });
+        }
+        return;
+      }
+
+      if (!convBlocked) {
+        if (mounted) {
+          setState(() {
+            _isBlocked = false;
+            _blockReason = null;
+            _blockedByUid = null;
+          });
+        }
+        return;
+      }
+
+      if (otherId != null && otherId.isNotEmpty) {
+        // Fallback check 2 chiều
+        final blockStatus = await _repository.checkBlockStatus(otherId);
+        if (mounted) {
+          setState(() {
+            _isBlocked = blockStatus.isBlocked;
+            _blockReason = blockStatus.reason;
+            _blockedByUid = convBlockedBy;
+          });
+        }
+      }
+    } catch (e) {
+      print('⚠️ Lỗi load block status: $e');
+    }
+  }
+
+  Future<void> _loadConversationMuteStatus() async {
+    try {
+      final doc =
+          await _firestore.collection('conversations').doc(widget.conversationId).get();
+      final data = doc.data();
+      if (!mounted || data == null) return;
+      setState(() {
+        _isMuted = (data['isMuted'] ?? false) as bool;
+      });
+    } catch (e) {
+      // Không cần show lỗi ra UI, chỉ log để debug
+      debugPrint('⚠️ Lỗi load trạng thái mute: $e');
+    }
   }
   
   Future<void> _markMessagesAsRead() async {
@@ -275,12 +371,124 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
+    _conversationSub?.cancel();
     super.dispose();
+  }
+
+  void _listenConversationBlockFlag() {
+    _conversationSub = _firestore
+        .collection('conversations')
+        .doc(widget.conversationId)
+        .snapshots()
+        .listen((snap) async {
+      final data = snap.data();
+      final blocked = (data?['isBlocked'] ?? false) as bool;
+      final blockedBy = data?['blockedBy'] as String?;
+
+      if (blocked && mounted) {
+        // Ưu tiên xác định theo blockedBy
+        final currentUid = _auth.currentUser?.uid;
+        if (blockedBy != null && currentUid != null) {
+          setState(() {
+            _isBlocked = true;
+            _blockReason = blockedBy == currentUid ? 'you_blocked' : 'they_blocked';
+            _blockedByUid = blockedBy;
+          });
+          return;
+        }
+
+        // Nếu không có blockedBy, fallback check 2 chiều
+        final otherId = await _getOtherUserId();
+        if (otherId != null && otherId.isNotEmpty) {
+          final blockStatus = await _repository.checkBlockStatus(otherId);
+          if (mounted) {
+            setState(() {
+              _isBlocked = true;
+              _blockReason = blockStatus.reason; // 'you_blocked' hoặc 'they_blocked'
+              _blockedByUid = blockedBy;
+            });
+          }
+        } else if (mounted) {
+          // Fallback nếu không lấy được otherId
+          setState(() {
+            _isBlocked = true;
+            _blockReason ??= 'conversation_blocked';
+            _blockedByUid = blockedBy;
+          });
+        }
+      } else if (!blocked && mounted) {
+        // Conversation không bị block: reset state ngay (không cần check 2 chiều)
+        setState(() {
+          _isBlocked = false;
+          _blockReason = null;
+          _blockedByUid = null;
+        });
+      }
+    });
+  }
+
+  Future<String?> _getOtherUserId() async {
+    if (_resolvedOtherUserId != null && _resolvedOtherUserId!.isNotEmpty) {
+      return _resolvedOtherUserId;
+    }
+    if (widget.otherUserId.isNotEmpty) {
+      _resolvedOtherUserId = widget.otherUserId;
+      return _resolvedOtherUserId;
+    }
+    _resolvedOtherUserId = await _repository.getOtherParticipantId(widget.conversationId);
+    return _resolvedOtherUserId;
+  }
+
+  Future<void> _resolveOtherUserId() async {
+    await _getOtherUserId();
   }
 
   Future<void> _sendMessage() async {
     final content = _messageController.text.trim();
     if (content.isEmpty && _selectedImages.isEmpty) return;
+
+    // Kiểm tra block 2 chiều: nếu một trong hai bên đã chặn thì không gửi
+    if (_isBlocked) {
+      final message = _blockReason == 'you_blocked'
+          ? 'Bạn đã chặn người này, không thể gửi tin nhắn.'
+          : 'Người này đã chặn bạn, không thể gửi tin nhắn.';
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Double check trước khi gửi (để đảm bảo)
+    String? otherId = await _getOtherUserId();
+    if (otherId != null && otherId.isNotEmpty) {
+      final blockStatus = await _repository.checkBlockStatus(otherId);
+      if (blockStatus.isBlocked) {
+        // Cập nhật state
+        if (mounted) {
+          setState(() {
+            _isBlocked = true;
+            _blockReason = blockStatus.reason;
+          });
+        }
+        final message = blockStatus.reason == 'you_blocked'
+            ? 'Bạn đã chặn người này, không thể gửi tin nhắn.'
+            : 'Người này đã chặn bạn, không thể gửi tin nhắn.';
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(message),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+    }
 
     setState(() {
       _isSending = true;
@@ -361,6 +569,48 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     }
   }
 
+  Future<void> _unblock() async {
+    if (_isUnblocking) return;
+    setState(() => _isUnblocking = true);
+    try {
+      final otherId = await _getOtherUserId();
+      final result = await _repository.toggleBlockUser(
+        otherId ?? widget.otherUserId,
+        false,
+        conversationId: widget.conversationId,
+      );
+      if (mounted) {
+        if (result is ApiSuccess) {
+          setState(() {
+            _isBlocked = false;
+            _blockReason = null;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Đã bỏ chặn')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Lỗi: ${(result as ApiError).message}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lỗi: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUnblocking = false);
+    }
+  }
+
   Future<void> _pickImages() async {
     try {
       final images = await _imagePicker.pickMultiImage();
@@ -405,14 +655,9 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.volume_off),
-              title: const Text('Tắt tiếng'),
+              leading: Icon(_isMuted ? Icons.volume_up : Icons.volume_off),
+              title: Text(_isMuted ? 'Bật tiếng' : 'Tắt tiếng'),
               onTap: () => Navigator.pop(context, 'mute'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.report),
-              title: const Text('Báo cáo'),
-              onTap: () => Navigator.pop(context, 'report'),
             ),
             ListTile(
               leading: const Icon(Icons.block),
@@ -436,34 +681,62 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       case 'mute':
         _toggleMute();
         break;
-      case 'report':
-        _showReportDialog();
-        break;
       case 'block':
         _showBlockDialog();
         break;
       case 'view_room':
-        // TODO: Navigate to room detail
+        _openRoom();
         break;
     }
   }
 
+  Future<void> _openRoom() async {
+    if (widget.roomId == null || widget.roomId!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không tìm thấy phòng để xem')),
+      );
+      return;
+    }
+    final result = await _roomsRepository.getRoomById(widget.roomId!);
+    if (!mounted) return;
+    if (result is ApiSuccess<Room?> && result.data != null) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => RoomDetailScreen(room: result.data!),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Không mở được phòng: ${(result as ApiError).message}')),
+      );
+    }
+  }
+
   Future<void> _toggleMute() async {
-    // TODO: Get current mute status from conversation
-    final result = await _repository.toggleMuteConversation(widget.conversationId, true);
-    if (mounted) {
-      if (result is ApiSuccess) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Đã tắt tiếng cuộc trò chuyện')),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Lỗi: ${(result as ApiError).message}'),
-            backgroundColor: Colors.red,
+    final newValue = !_isMuted;
+    final result =
+        await _repository.toggleMuteConversation(widget.conversationId, newValue);
+
+    if (!mounted) return;
+
+    if (result is ApiSuccess) {
+      setState(() {
+        _isMuted = newValue;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            newValue ? 'Đã tắt tiếng cuộc trò chuyện' : 'Đã bật tiếng lại cho cuộc trò chuyện',
           ),
-        );
-      }
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Lỗi: ${(result as ApiError).message}'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -475,25 +748,27 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Báo cáo người dùng'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: reasonController,
-              decoration: const InputDecoration(
-                labelText: 'Lý do',
-                hintText: 'Spam, quấy rối, lừa đảo...',
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: reasonController,
+                decoration: const InputDecoration(
+                  labelText: 'Lý do',
+                  hintText: 'Spam, quấy rối, lừa đảo...',
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: descriptionController,
-              decoration: const InputDecoration(
-                labelText: 'Mô tả chi tiết (tùy chọn)',
+              const SizedBox(height: 16),
+              TextField(
+                controller: descriptionController,
+                decoration: const InputDecoration(
+                  labelText: 'Mô tả chi tiết (tùy chọn)',
+                ),
+                maxLines: 3,
               ),
-              maxLines: 3,
-            ),
-          ],
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -507,6 +782,10 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
         ],
       ),
     );
+
+    // Dọn controller để tránh warning/assert khi đóng dialog
+    reasonController.dispose();
+    descriptionController.dispose();
 
     if (result == true && reasonController.text.trim().isNotEmpty) {
       final reportResult = await _repository.reportUser(
@@ -559,7 +838,11 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
     );
 
     if (confirmed == true) {
-      final blockResult = await _repository.toggleBlockUser(widget.otherUserId, true);
+      final blockResult = await _repository.toggleBlockUser(
+        widget.otherUserId,
+        true,
+        conversationId: widget.conversationId,
+      );
       if (mounted) {
         if (blockResult is ApiSuccess) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -779,61 +1062,112 @@ class _ConversationDetailScreenState extends State<ConversationDetailScreen> {
             ),
           ),
 
-          // Input area
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.shade300,
-                  blurRadius: 4,
-                  offset: const Offset(0, -2),
-                ),
-              ],
-            ),
-            child: SafeArea(
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.image),
-                    onPressed: _pickImages,
-                    tooltip: 'Chọn ảnh',
-                  ),
-                  Expanded(
-                    child: TextField(
-                      controller: _messageController,
-                      decoration: InputDecoration(
-                        hintText: 'Nhập tin nhắn...',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
+          // Input area / banner chặn
+          _isBlocked
+              ? Container(
+                  width: double.infinity,
+                  color: Colors.grey.shade200,
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                  child: SafeArea(
+                    top: false,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.block,
+                              color: _blockReason == 'they_blocked'
+                                  ? Colors.red
+                                  : Colors.orange,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _blockReason == 'they_blocked'
+                                    ? 'Người này đã chặn bạn. Bạn không thể nhắn tin.'
+                                    : 'Bạn đã chặn người này. Mở chặn để nhắn lại.',
+                                style: const TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
                         ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                      ),
-                      maxLines: null,
-                      textCapitalization: TextCapitalization.sentences,
-                      onSubmitted: (_) => _sendMessage(),
+                        const SizedBox(height: 10),
+                        // CHỈ hiện nút "Mở chặn" khi BẠN là người chặn (you_blocked)
+                        if (_blockReason == 'you_blocked' &&
+                            _blockedByUid == _auth.currentUser?.uid)
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: ElevatedButton.icon(
+                              onPressed: _isUnblocking ? null : _unblock,
+                              icon: _isUnblocking
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.lock_open),
+                              label: const Text('Mở chặn'),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: _isSending
-                        ? const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.send),
-                    onPressed: _isSending ? null : _sendMessage,
-                    tooltip: 'Gửi',
+                )
+              : Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.grey.shade300,
+                        blurRadius: 4,
+                        offset: const Offset(0, -2),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
-          ),
+                  child: SafeArea(
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.image),
+                          onPressed: _pickImages,
+                          tooltip: 'Chọn ảnh',
+                        ),
+                        Expanded(
+                          child: TextField(
+                            controller: _messageController,
+                            decoration: InputDecoration(
+                              hintText: 'Nhập tin nhắn...',
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
+                            ),
+                            maxLines: null,
+                            textCapitalization: TextCapitalization.sentences,
+                            onSubmitted: (_) => _sendMessage(),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: _isSending
+                              ? const SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.send),
+                          onPressed: _isSending ? null : _sendMessage,
+                          tooltip: 'Gửi',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
         ],
       ),
     );

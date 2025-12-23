@@ -20,7 +20,7 @@ class RoomsRepository {
   /// [limit]: Giới hạn số lượng phòng trả về.
   /// [lastDocument]: Document snapshot cuối cùng để pagination (cho infinite scroll).
   Future<ApiResult<List<Room>>> getRooms({
-    bool useCache = true,
+    bool useCache = false, // default to fresh fetch to tránh cache tin đã ẩn/từ chối
     int? limit,
     DocumentSnapshot? lastDocument,
   }) async {

@@ -8,7 +8,6 @@ import '../home/data/repositories/rooms_repository.dart';
 import '../home/models/room.dart';
 import '../auth/services/auth_service.dart';
 import '../auth/screens/login_screen.dart';
-import '../home/data/import_to_firestore.dart';
 import '../post/screens/posted_rooms_management_screen.dart';
 import '../chat/screens/conversations_list_screen.dart';
 import '../auth/data/repositories/users_repository.dart';
@@ -231,15 +230,6 @@ class _AccountScreenState extends State<AccountScreen> {
                   },
                 ),
                 const Divider(height: 1),
-                // Dev menu: Import data (chỉ hiện khi development)
-                if (const bool.fromEnvironment('dart.vm.product') == false) ...[
-                  _MenuTile(
-                    icon: Icons.cloud_upload,
-                    label: 'Import Data (Dev)',
-                    onTap: () => _showImportDialog(context),
-                  ),
-                  const Divider(height: 1),
-                ],
                 _MenuTile(
                   icon: Icons.logout,
                   label: 'Đăng xuất',
@@ -322,66 +312,6 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
-  void _showImportDialog(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Import Data vào Firestore'),
-          content: const Text(
-            'Bạn có chắc muốn import mock data vào Firestore?\n\n'
-            'Lưu ý: Chỉ import những phòng chưa có (tránh duplicate).',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Hủy'),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.of(dialogContext).pop();
-                await _handleImport(context);
-              },
-              child: const Text('Import'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _handleImport(BuildContext context) async {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Đang import data...'),
-        duration: Duration(seconds: 2),
-      ),
-    );
-
-    try {
-      await importRoomsToFirestore();
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ Import thành công! Refresh app để xem data mới.'),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 3),
-          ),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ Lỗi: ${e.toString()}'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 5),
-          ),
-        );
-      }
-    }
-  }
-
   Future<void> _handleLogout() async {
     setState(() => _isLoggingOut = true);
 
@@ -453,9 +383,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _isLoading = false;
   bool _isLoadingData = true;
   String? _selectedCity;
-  String? _selectedDistrict;
 
-  // Danh sách thành phố và quận/huyện
+  // Danh sách thành phố
   final List<String> _cities = [
     'Hà Nội',
     'TP.HCM',
@@ -522,11 +451,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     'Yên Bái',
   ];
 
-  final Map<String, List<String>> _districts = {
-    'Hà Nội': ['Ba Đình', 'Hoàn Kiếm', 'Tây Hồ', 'Long Biên', 'Cầu Giấy', 'Đống Đa', 'Hai Bà Trưng', 'Hoàng Mai', 'Thanh Xuân', 'Sóc Sơn', 'Đông Anh', 'Gia Lâm', 'Nam Từ Liêm', 'Bắc Từ Liêm', 'Mê Linh', 'Hà Đông', 'Sơn Tây', 'Ba Vì', 'Phúc Thọ', 'Đan Phượng', 'Hoài Đức', 'Quốc Oai', 'Thạch Thất', 'Chương Mỹ', 'Thanh Oai', 'Thường Tín', 'Phú Xuyên', 'Ứng Hòa', 'Mỹ Đức'],
-    'TP.HCM': ['Quận 1', 'Quận 2', 'Quận 3', 'Quận 4', 'Quận 5', 'Quận 6', 'Quận 7', 'Quận 8', 'Quận 9', 'Quận 10', 'Quận 11', 'Quận 12', 'Bình Thạnh', 'Tân Bình', 'Tân Phú', 'Phú Nhuận', 'Gò Vấp', 'Bình Tân', 'Hóc Môn', 'Củ Chi', 'Nhà Bè', 'Cần Giờ'],
-  };
-
   @override
   void initState() {
     super.initState();
@@ -552,7 +476,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             _nameController.text = userData['displayName'] ?? userData['name'] ?? '';
             _phoneController.text = userData['phone'] ?? '';
             _selectedCity = userData['city'];
-            _selectedDistrict = userData['district'];
           });
         }
       }
@@ -579,7 +502,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         if (_phoneController.text.trim().isNotEmpty)
           'phone': _phoneController.text.trim(),
         if (_selectedCity != null) 'city': _selectedCity,
-        if (_selectedDistrict != null) 'district': _selectedDistrict,
       };
 
       final result = await _usersRepository.updateUser(updateData);
@@ -699,32 +621,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 onChanged: (value) {
                   setState(() {
                     _selectedCity = value;
-                    _selectedDistrict = null; // Reset district khi đổi city
                   });
                 },
-              ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                decoration: const InputDecoration(
-                  labelText: 'Quận/Huyện',
-                  prefixIcon: Icon(Icons.location_on_outlined),
-                ),
-                value: _selectedDistrict,
-                items: _selectedCity != null && _districts.containsKey(_selectedCity)
-                    ? _districts[_selectedCity]!.map((district) {
-                        return DropdownMenuItem(
-                          value: district,
-                          child: Text(district),
-                        );
-                      }).toList()
-                    : null,
-                onChanged: _selectedCity != null && _districts.containsKey(_selectedCity)
-                    ? (value) {
-                        setState(() {
-                          _selectedDistrict = value;
-                        });
-                      }
-                    : null,
               ),
               const Spacer(),
               SizedBox(
