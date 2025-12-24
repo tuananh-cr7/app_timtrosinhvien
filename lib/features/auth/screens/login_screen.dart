@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../services/auth_service.dart';
 import 'register_screen.dart';
@@ -37,49 +38,19 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final user = await _authService.signInWithEmail(
+      // Đăng nhập, còn điều hướng / kiểm tra khóa sẽ do RootDecider (main.dart) xử lý
+      await _authService.signInWithEmail(
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
-
-      if (!mounted) return;
-
-      // Kiểm tra email đã verify chưa
-      if (!user.emailVerified) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => EmailVerificationScreen(email: user.email!),
-          ),
-        );
-        return;
-      }
-
-      // Đăng nhập thành công → vào app
-      // Lấy services từ ServiceLocator
-      final connectivityService = ServiceLocator.connectivityService;
-      final offlineQueueService = ServiceLocator.offlineQueueService;
-      if (connectivityService != null && offlineQueueService != null) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(
-            builder: (_) => HomeShell(
-              connectivityService: connectivityService,
-              offlineQueueService: offlineQueueService,
-            ),
-          ),
-          (route) => false,
-        );
-      } else {
-        // Fallback nếu services chưa được init (không nên xảy ra)
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const Scaffold(body: Center(child: Text('Đang khởi tạo...')))),
-          (route) => false,
-        );
-      }
     } catch (e) {
       if (!mounted) return;
+      final message = (e is String)
+          ? e
+          : e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          content: Text(message),
           backgroundColor: Colors.red,
         ),
       );
@@ -94,38 +65,16 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final user = await _authService.signInWithGoogle();
-
-      if (!mounted) return;
-
-      // Google Sign-In tự động verify email → vào app luôn
-      // Lấy services từ ServiceLocator
-      final connectivityService = ServiceLocator.connectivityService;
-      final offlineQueueService = ServiceLocator.offlineQueueService;
-      if (connectivityService != null && offlineQueueService != null) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(
-            builder: (_) => HomeShell(
-              connectivityService: connectivityService,
-              offlineQueueService: offlineQueueService,
-            ),
-          ),
-          (route) => false,
-        );
-      } else {
-        // Fallback nếu services chưa được init (không nên xảy ra)
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const Scaffold(body: Center(child: Text('Đang khởi tạo...')))),
-          (route) => false,
-        );
-      }
+      // Đăng nhập Google, còn điều hướng / kiểm tra khóa do RootDecider xử lý
+      await _authService.signInWithGoogle();
     } catch (e) {
       if (!mounted) return;
 
       // Hiển thị snackbar lỗi (kể cả khi user hủy)
-      final message = e.toString().contains('hủy')
+      final raw = e.toString().replaceFirst('Exception: ', '');
+      final message = raw.contains('hủy')
           ? 'Đăng nhập Google đã bị hủy'
-          : e.toString().replaceFirst('Exception: ', '');
+          : raw;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

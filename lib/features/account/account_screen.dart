@@ -256,18 +256,6 @@ class _AccountScreenState extends State<AccountScreen> {
                     );
                   },
                 ),
-                const Divider(height: 1),
-                _MenuTile(
-                  icon: Icons.support_agent_outlined,
-                  label: 'Liên hệ hỗ trợ',
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const ContactSupportScreen(),
-                      ),
-                    );
-                  },
-                ),
               ],
             ),
           ),

@@ -7,6 +7,7 @@ import 'features/home/home_shell.dart';
 import 'features/onboarding/onboarding_screen.dart' show hasSeenOnboarding, OnboardingScreen;
 import 'features/onboarding/splash_screen.dart' show SplashScreen;
 import 'features/auth/screens/login_screen.dart';
+import 'features/auth/services/auth_service.dart';
 import 'features/auth/screens/email_verification_screen.dart';
 import 'core/cache/hive_service.dart';
 import 'core/services/fcm_service.dart';
@@ -18,6 +19,7 @@ import 'core/services/service_locator.dart';
 import 'core/widgets/offline_indicator.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -158,12 +160,19 @@ class _RootDeciderState extends State<_RootDecider> {
   bool _isBanned = false;
   String? _banReason;
   bool _isAdminBlocked = false;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userDocSub;
 
   @override
   void initState() {
     super.initState();
     _loadOnboardingFlag();
     _listenAuthState();
+  }
+
+  @override
+  void dispose() {
+    _userDocSub?.cancel();
+    super.dispose();
   }
 
   void _listenAuthState() {
@@ -176,7 +185,11 @@ class _RootDeciderState extends State<_RootDecider> {
           _banReason = null;
           _isAdminBlocked = false;
         });
-        
+
+        // Hủy listener user cũ nếu có
+        _userDocSub?.cancel();
+        _userDocSub = null;
+
         // Khởi tạo presence service khi user đăng nhập
         if (user != null) {
           await PresenceService().initialize();
@@ -191,8 +204,28 @@ class _RootDeciderState extends State<_RootDecider> {
             return;
           }
 
-          // Kiểm tra trạng thái khóa tài khoản
-          await _checkBan(user);
+          // Lắng nghe realtime trạng thái khóa tài khoản
+          _userDocSub = FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .snapshots()
+              .listen((doc) {
+            final data = doc.data();
+            final banned = data?['banned'] == true;
+            final reason = data?['banReason'] as String?;
+            if (!mounted) return;
+            setState(() {
+              _isBanned = banned;
+              _banReason = banned ? reason : null;
+            });
+            debugPrint('🔒 Realtime ban change -> banned=$banned reason=${reason ?? "none"}');
+          });
+
+          // Kiểm tra trạng thái khóa tài khoản lần đầu từ server để tránh cache cũ
+          final bannedNow = await _checkBan(user);
+          if (bannedNow) {
+            debugPrint('🔒 Banned detected on login, keeping user on banned screen.');
+          }
         }
       }
     });
@@ -257,12 +290,14 @@ class _RootDeciderState extends State<_RootDecider> {
   }
 
   /// Kiểm tra xem user có bị khóa không. Nếu bị khóa, sẽ hiển thị thông báo và không cho vào app.
-  Future<void> _checkBan(firebase_auth.User user) async {
+  Future<bool> _checkBan(firebase_auth.User user) async {
     setState(() {
       _isCheckingBan = true;
       _isBanned = false;
       _banReason = null;
     });
+    bool banned = false;
+    String? reason;
     try {
       // Luôn lấy từ server để không dính cache cũ
       final doc = await FirebaseFirestore.instance
@@ -270,13 +305,16 @@ class _RootDeciderState extends State<_RootDecider> {
           .doc(user.uid)
           .get(const GetOptions(source: Source.server));
       final data = doc.data();
-      final banned = data?['banned'] == true;
-      final reason = data?['banReason'] as String?;
+      banned = data?['banned'] == true;
+      reason = data?['banReason'] as String?;
       if (banned) {
         setState(() {
           _isBanned = true;
           _banReason = reason;
         });
+        debugPrint('🔒 Ban check (server) -> banned=$banned reason=${reason ?? "none"}');
+      } else {
+        debugPrint('✅ Ban check (server) -> not banned');
       }
     } catch (e) {
       // Nếu lỗi, không chặn nhưng log ra
@@ -288,6 +326,7 @@ class _RootDeciderState extends State<_RootDecider> {
         });
       }
     }
+    return banned;
   }
 
   /// Chặn tài khoản có claim admin/role admin đăng nhập app người dùng.
@@ -357,7 +396,7 @@ class _RootDeciderState extends State<_RootDecider> {
                 const SizedBox(height: 16),
                 ElevatedButton(
                   onPressed: () async {
-                    await firebase_auth.FirebaseAuth.instance.signOut();
+                    await AuthService().signOut();
                     if (mounted) {
                       setState(() => _isAdminBlocked = false);
                     }
@@ -407,7 +446,7 @@ class _RootDeciderState extends State<_RootDecider> {
                 const SizedBox(height: 16),
                 ElevatedButton(
                   onPressed: () async {
-                    await firebase_auth.FirebaseAuth.instance.signOut();
+                    await AuthService().signOut();
                   },
                   child: const Text('Đăng xuất'),
                 ),

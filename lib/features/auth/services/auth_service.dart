@@ -204,6 +204,9 @@ class AuthService {
         return 'Không tìm thấy tài khoản với email này';
       case 'wrong-password':
         return 'Mật khẩu không đúng';
+      case 'invalid-credential': // Firebase Auth SDK mới
+      case 'invalid-login-credentials': // Một số phiên bản SDK trả về code này
+        return 'Email hoặc mật khẩu không đúng';
       case 'invalid-email':
         return 'Email không hợp lệ';
       case 'user-disabled':
